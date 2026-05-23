@@ -1,0 +1,22 @@
+# PDFs gerados e de teste
+*.pdf
+
+# Fichas de clientes (dados pessoais)
+ANAMNESE*.docx
+anamnese*.docx
+
+# Templates antigos (Canva/PPTX — não usados)
+templates/*.pptx
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Segredos locais (chave de API)
+.env
+.streamlit/secrets.toml
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
