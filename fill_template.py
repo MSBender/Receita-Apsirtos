@@ -23,8 +23,6 @@ class _C:
     TEAL_MED    = RGBColor(0x2E, 0x86, 0xC1)
     TEAL_LIGHT  = RGBColor(0xEB, 0xF5, 0xFB)
     TABLE_HDR   = "1A5276"
-    TABLE_ALT   = "EBF5FB"
-    TABLE_TOTAL = "D6EAF8"
     WHITE       = "FFFFFF"
     TEXT_DARK   = RGBColor(0x1C, 0x28, 0x33)
 
@@ -207,7 +205,6 @@ def _replace_all_placeholders(doc: Document, replacements: dict) -> None:
 def _build_ingredients_table(
     doc: Document,
     ingredients: List[Tuple[str, str]],
-    total: str,
 ) -> object:
     CONTENT_W = 9638
     COL_INGR  = int(CONTENT_W * 0.745)
@@ -222,7 +219,7 @@ def _build_ingredients_table(
     _set_row_height(hdr_row, 640)
     for idx, (cell, header_text, col_w) in enumerate(zip(
         hdr_row.cells,
-        ["Ingredientes", "Qtd (g)"],
+        ["Ingredientes", "Qtd"],
         [COL_INGR, COL_QTD],
     )):
         cell.text = ""
@@ -276,41 +273,6 @@ def _build_ingredients_table(
         r1.font.size = Pt(11)
         r1.font.color.rgb = _C.TEXT_DARK
 
-    # Linha TOTAL
-    tot_row = table.add_row()
-    _set_row_height(tot_row, 720)
-
-    ct0 = tot_row.cells[0]
-    ct0.text = ""
-    _set_cell_bg(ct0, _C.TABLE_TOTAL)
-    _set_cell_borders(ct0, _C.TABLE_HDR)
-    _set_cell_width(ct0, COL_INGR)
-    _set_cell_margins(ct0, top=0, bottom=0, left=160, right=160)
-    _cell_valign(ct0, "center")
-    pt0 = ct0.paragraphs[0]
-    _para_space(pt0, before=0, after=0)
-    rt0 = pt0.add_run("TOTAL")
-    rt0.bold = True
-    rt0.font.name = "Arial"
-    rt0.font.size = Pt(11)
-    rt0.font.color.rgb = _C.TEAL_DARK
-
-    ct1 = tot_row.cells[1]
-    ct1.text = ""
-    _set_cell_bg(ct1, _C.TABLE_TOTAL)
-    _set_cell_borders(ct1, _C.TABLE_HDR)
-    _set_cell_width(ct1, COL_QTD)
-    _set_cell_margins(ct1, top=0, bottom=0, left=160, right=160)
-    _cell_valign(ct1, "center")
-    pt1 = ct1.paragraphs[0]
-    pt1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _para_space(pt1, before=0, after=0)
-    rt1 = pt1.add_run(str(total))
-    rt1.bold = True
-    rt1.font.name = "Arial"
-    rt1.font.size = Pt(11)
-    rt1.font.color.rgb = _C.TEAL_DARK
-
     return table._tbl
 
 
@@ -318,7 +280,6 @@ def fill_template(
     docx_path: str,
     data: dict,
     ingredients: List[Tuple[str, str]],
-    total: str,
     opcao_num: str,
 ) -> bytes:
     doc = Document(docx_path)
@@ -343,11 +304,340 @@ def fill_template(
             "Certifique-se de usar um template gerado por create_templates.py."
         )
 
-    tbl_el = _build_ingredients_table(doc, ingredients, total)
+    tbl_el = _build_ingredients_table(doc, ingredients)
 
     sample_tbl_el = sample_table._tbl
     sample_tbl_el.addprevious(tbl_el)
     sample_tbl_el.getparent().remove(sample_tbl_el)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer.read()
+
+
+def fill_exames(
+    docx_path: str,
+    data: dict,
+    exames: List[str],
+) -> bytes:
+    """Preenche o template de solicitação de exames.
+
+    Parameters
+    ----------
+    docx_path : str
+        Caminho para template_exames.docx
+    data : dict
+        Mesmos campos do fill_template (pet_nome, tutor_nome, data, etc.)
+    exames : List[str]
+        Lista de exames solicitados — cada item vira um bullet point.
+    """
+    doc = Document(docx_path)
+
+    _replace_all_placeholders(doc, data)
+
+    # Localiza o parágrafo marcador {{exames}}
+    marker = None
+    for p in doc.paragraphs:
+        if "{{exames}}" in p.text:
+            marker = p
+            break
+
+    if marker is None:
+        raise ValueError(
+            "Marcador {{exames}} nao encontrado no template. "
+            "Use um template gerado por create_templates.py."
+        )
+
+    # Insere os bullets antes do marcador (ordem inversa para manter sequência)
+    TEXT_DARK = RGBColor(0x1C, 0x28, 0x33)
+    for exame in exames:
+        new_p = OxmlElement("w:p")
+        # pPr — indentação bullet
+        pPr = OxmlElement("w:pPr")
+        ind = OxmlElement("w:ind")
+        ind.set(qn("w:left"), "360")
+        ind.set(qn("w:hanging"), "180")
+        spacing = OxmlElement("w:spacing")
+        spacing.set(qn("w:before"), "0")
+        spacing.set(qn("w:after"), "60")
+        pPr.append(spacing)
+        pPr.append(ind)
+        new_p.append(pPr)
+        # run com bullet + texto
+        r = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        rFonts = OxmlElement("w:rFonts")
+        rFonts.set(qn("w:ascii"), "Arial")
+        rFonts.set(qn("w:hAnsi"), "Arial")
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), "22")        # 11pt = 22 half-points
+        color_el = OxmlElement("w:color")
+        color_el.set(qn("w:val"), "1C2833")
+        rPr.append(rFonts); rPr.append(sz); rPr.append(color_el)
+        r.append(rPr)
+        t = OxmlElement("w:t")
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        t.text = "• " + str(exame)
+        r.append(t)
+        new_p.append(r)
+        marker._element.addprevious(new_p)
+
+    # Remove o paragrafo marcador
+    marker._element.getparent().remove(marker._element)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer.read()
+
+
+# ─── Helpers internos para prescrição ────────────────────────────────────────
+
+_PRESC_W        = 9638
+_PRESC_HALF     = _PRESC_W // 2
+_PRESC_TEAL_D   = "1A5276"
+_PRESC_TEAL_M   = "2E86C1"
+_PRESC_TEAL_L   = "EBF5FB"
+_PRESC_WHITE_H  = "FFFFFF"
+_PRESC_WHITE_R  = RGBColor(0xFF, 0xFF, 0xFF)
+_PRESC_AED6F1   = RGBColor(0xAE, 0xD6, 0xF1)
+_PRESC_DARK_R   = RGBColor(0x1C, 0x28, 0x33)
+_PRESC_TEAL_DR  = RGBColor(0x1A, 0x52, 0x76)
+_PRESC_TEAL_MR  = RGBColor(0x2E, 0x86, 0xC1)
+_PRESC_GRAY_R   = RGBColor(0x55, 0x55, 0x55)
+
+
+def _pw(table, dxa):
+    tbl = table._tbl
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr"); tbl.insert(0, tblPr)
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:w"), str(dxa)); tblW.set(qn("w:type"), "dxa")
+    _insert_ordered(tblPr, tblW, _TBLPR_ORDER)
+
+
+def _prb(table):
+    tbl = table._tbl
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None: return
+    borders = OxmlElement("w:tblBorders")
+    for side in ("top","left","bottom","right","insideH","insideV"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"),"none"); b.set(qn("w:sz"),"0")
+        b.set(qn("w:space"),"0"); b.set(qn("w:color"),"auto")
+        borders.append(b)
+    _insert_ordered(tblPr, borders, _TBLPR_ORDER)
+
+
+def _pcb(cell, hex_color):
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"),"clear"); shd.set(qn("w:color"),"auto")
+    shd.set(qn("w:fill"), hex_color)
+    _insert_ordered(tcPr, shd, _TCPR_ORDER)
+
+
+def _pcm(cell, top=80, bottom=80, left=140, right=140):
+    tcPr = cell._tc.get_or_add_tcPr()
+    tcMar = OxmlElement("w:tcMar")
+    for side, val in (("top",top),("left",left),("bottom",bottom),("right",right)):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:w"), str(val)); el.set(qn("w:type"),"dxa")
+        tcMar.append(el)
+    _insert_ordered(tcPr, tcMar, _TCPR_ORDER)
+
+
+def _pcbn(cell):
+    tcPr = cell._tc.get_or_add_tcPr()
+    bel = OxmlElement("w:tcBorders")
+    for side in ("top","left","bottom","right","insideH","insideV"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"),"none"); b.set(qn("w:sz"),"0")
+        b.set(qn("w:space"),"0"); b.set(qn("w:color"),"auto")
+        bel.append(b)
+    _insert_ordered(tcPr, bel, _TCPR_ORDER)
+
+
+def _pcborder(cell, color, sz="6"):
+    tcPr = cell._tc.get_or_add_tcPr()
+    bel = OxmlElement("w:tcBorders")
+    for side in ("top","left","bottom","right"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"),"single"); b.set(qn("w:sz"),sz)
+        b.set(qn("w:space"),"0"); b.set(qn("w:color"),color)
+        bel.append(b)
+    _insert_ordered(tcPr, bel, _TCPR_ORDER)
+
+
+def _pcw(cell, dxa):
+    tcPr = cell._tc.get_or_add_tcPr()
+    tcW = OxmlElement("w:tcW")
+    tcW.set(qn("w:w"), str(dxa)); tcW.set(qn("w:type"),"dxa")
+    _insert_ordered(tcPr, tcW, _TCPR_ORDER)
+
+
+def _pr(para, text, bold=False, italic=False, size_pt=10, color=None):
+    run = para.add_run(text)
+    run.bold = bold; run.italic = italic
+    run.font.name = "Arial"; run.font.size = Pt(size_pt)
+    if color: run.font.color.rgb = color
+
+
+def _presc_header(doc):
+    table = doc.add_table(rows=1, cols=1)
+    _pw(table, _PRESC_W); _prb(table)
+    cell = table.rows[0].cells[0]
+    cell.text = ""
+    _pcb(cell, _PRESC_TEAL_D)
+    _pcm(cell, top=200, bottom=200, left=240, right=240)
+    _pcbn(cell)
+    p1 = cell.paragraphs[0]
+    _pr(p1, 'Apsirtus Clinica Veterinaria', bold=True, size_pt=16, color=_PRESC_WHITE_R)
+    _para_space(p1, before=0, after=50)
+    p2 = cell.add_paragraph()
+    _pr(p2, 'Isabelle Rizzo Assumpção  —  CRMV 48652/SP', size_pt=10, color=_PRESC_AED6F1)
+    _para_space(p2, before=0, after=70)
+    p3 = cell.add_paragraph()
+    _pr(p3, 'PRESCRIÇÃO', bold=True, size_pt=11, color=_PRESC_WHITE_R)
+    _para_space(p3, before=0, after=0)
+
+
+def _presc_line(doc):
+    p = doc.add_paragraph()
+    pPr = p._element.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"),"single"); bot.set(qn("w:sz"),"6")
+    bot.set(qn("w:space"),"1"); bot.set(qn("w:color"), _PRESC_TEAL_M)
+    pBdr.append(bot); pPr.append(pBdr)
+    _para_space(p, before=80, after=80)
+
+
+def _presc_data(doc):
+    table = doc.add_table(rows=1, cols=2)
+    _pw(table, _PRESC_W); _prb(table)
+    sections = [
+        ("DADOS DO ANIMAL", [
+            ("Nome",       "{{pet_nome}}"),
+            ("Especie",    "{{pet_especie}}"),
+            ("Raca",       "{{pet_raca}}"),
+            ("Sexo",       "{{pet_sexo}}"),
+            ("Nascimento", "{{pet_nascimento}}"),
+        ]),
+        ("DADOS DO RESPONSAVEL", [
+            ("Nome",      "{{tutor_nome}}"),
+            ("CPF",       "{{tutor_cpf}}"),
+            ("Endereco",  "{{tutor_endereco}}"),
+        ]),
+    ]
+    labels = {
+        "DADOS DO ANIMAL": "DADOS DO ANIMAL",
+        "DADOS DO RESPONSAVEL": "DADOS DO RESPONSÁVEL",
+        "Especie": "Espécie", "Raca": "Raça", "Endereco": "Endereço",
+    }
+    for col_idx, (titulo_key, campos) in enumerate(sections):
+        cell = table.rows[0].cells[col_idx]
+        cell.text = ""
+        _pcb(cell, _PRESC_TEAL_L)
+        _pcborder(cell, _PRESC_TEAL_M)
+        _pcw(cell, _PRESC_HALF)
+        _pcm(cell, top=150, bottom=150, left=170, right=170)
+        titulo_display = labels.get(titulo_key, titulo_key)
+        p_title = cell.paragraphs[0]
+        _pr(p_title, titulo_display, bold=True, size_pt=10, color=_PRESC_TEAL_DR)
+        _para_space(p_title, before=0, after=90)
+        for label_key, placeholder in campos:
+            p = cell.add_paragraph()
+            label_display = labels.get(label_key, label_key)
+            _pr(p, f"{label_display}: ", bold=True, size_pt=9.5, color=_PRESC_DARK_R)
+            _pr(p, placeholder, bold=False, size_pt=9.5, color=_PRESC_DARK_R)
+            _para_space(p, before=0, after=20)
+
+
+def fill_prescricao(
+    docx_path: str,
+    data: dict,
+    pages: List[List[dict]],
+) -> bytes:
+    """Preenche o template de prescricao.
+
+    Parameters
+    ----------
+    docx_path : str
+        Caminho para template_prescricao.docx
+    data : dict
+        Campos do pet e tutor (pet_nome, pet_especie, pet_raca, pet_sexo,
+        pet_nascimento, tutor_nome, tutor_cpf, tutor_endereco, data)
+    pages : List[List[dict]]
+        Lista de paginas. Cada pagina e uma lista de vias.
+        Cada via: {"via": "USO ORAL", "medicamentos": [{"item": "...", "instrucao": "..."}]}
+        A numeracao dos itens e sequencial atraves de todas as paginas e vias.
+
+    Example
+    -------
+    pages = [
+        [{"via": "USO ORAL", "medicamentos": [
+            {"item": "Seren Snacks, Ourofino, farmacia veterinaria",
+             "instrucao": "De 1 tablete a cada 24 horas por 90 dias."},
+        ]}],
+        [{"via": "USO TOPICO", "medicamentos": [
+            {"item": "Pure+ Shampoo, Wesen Green, farmacia veterinaria",
+             "instrucao": "Aplique nos pelos molhados..."},
+        ]}],
+    ]
+    """
+    doc = Document(docx_path)
+
+    # Limpa o body preservando sectPr (margens + footer)
+    body = doc.element.body
+    for child in list(body):
+        if child.tag != qn("w:sectPr"):
+            body.remove(child)
+
+    counter = 1
+
+    for page_idx, vias in enumerate(pages):
+        _presc_header(doc)
+        _presc_line(doc)
+        _presc_data(doc)
+        _presc_line(doc)
+
+        for via_dict in vias:
+            via_name     = via_dict["via"]
+            medicamentos = via_dict["medicamentos"]
+
+            p_via = doc.add_paragraph()
+            _pr(p_via, via_name, bold=True, size_pt=14, color=_PRESC_DARK_R)
+            _para_space(p_via, before=200, after=100)
+
+            for med in medicamentos:
+                p_med = doc.add_paragraph()
+                _pr(p_med, f"{counter}. {med['item']}",
+                    bold=True, italic=True, size_pt=11, color=_PRESC_DARK_R)
+                _para_space(p_med, before=80, after=60)
+
+                p_instr = doc.add_paragraph()
+                pPr = p_instr._element.get_or_add_pPr()
+                ind = OxmlElement("w:ind")
+                ind.set(qn("w:left"), "360")
+                pPr.append(ind)
+                _pr(p_instr, med["instrucao"], italic=True, size_pt=11,
+                    color=_PRESC_DARK_R)
+                _para_space(p_instr, before=0, after=120)
+
+                counter += 1
+
+        if page_idx < len(pages) - 1:
+            p_br = doc.add_paragraph()
+            run_br = p_br.add_run()
+            br = OxmlElement("w:br")
+            br.set(qn("w:type"), "page")
+            run_br._r.append(br)
+            _para_space(p_br, before=0, after=0)
+
+    _replace_all_placeholders(doc, data)
 
     buffer = io.BytesIO()
     doc.save(buffer)
