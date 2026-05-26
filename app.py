@@ -60,32 +60,37 @@ def parse_anamnese(docx_bytes: bytes) -> dict:
         pet_nome="", pet_especie="", pet_raca="", pet_sexo="", pet_nascimento="",
     )
 
-    pet_idx = next(
-        (i for i, p in enumerate(paras) if re.match(r"^pet\s*:", p, re.I)), -1
-    )
+    def val(text: str) -> str:
+        """Extrai o valor após ':' numa linha 'Label: valor'."""
+        if ":" in text:
+            return text.split(":", 1)[1].strip()
+        return text.strip()
 
-    for p in (paras[:pet_idx] if pet_idx >= 0 else paras):
-        clean = p.strip()
-        digits = re.sub(r"[\.\-\/\s]", "", clean)
-        if re.match(r"^\d{11}$", digits):
-            data["tutor_cpf"] = clean
-        elif "@" in clean:
-            data["tutor_email"] = clean
-        elif re.search(r"\b(rua|av\.|avenida|alameda|travessa|estrada|rod\.)\b", clean, re.I):
-            data["tutor_endereco"] = clean
-        elif not data["tutor_nome"] and len(clean.split()) >= 2:
-            data["tutor_nome"] = clean
+    in_pet = False
+    for p in paras:
+        pl = p.lower()
 
-    if pet_idx >= 0:
-        pets = paras[pet_idx + 1:]
-        positional = [p for p in pets if not re.match(r"^(microchip|cor\s|peso\s|nasc:)", p, re.I)]
-        if len(positional) > 0: data["pet_nome"]      = positional[0].strip()
-        if len(positional) > 1: data["pet_raca"]      = positional[1].strip()
-        if len(positional) > 2: data["pet_sexo"]      = positional[2].strip()
-        for p in pets:
-            m = re.match(r"nasc[:\s]+(.+)", p, re.I)
-            if m:
-                data["pet_nascimento"] = m.group(1).strip()
+        if "nome do pet" in pl:
+            in_pet = True
+            data["pet_nome"] = val(p)
+        elif not in_pet:
+            if "nome completo" in pl or ("nome" in pl and "tutor" in pl):
+                data["tutor_nome"] = val(p)
+            elif pl.startswith("cpf"):
+                data["tutor_cpf"] = val(p)
+            elif "e-mail" in pl or "email" in pl:
+                data["tutor_email"] = val(p)
+            elif "endereço" in pl or "endereco" in pl:
+                data["tutor_endereco"] = val(p)
+        else:  # seção do pet
+            if "espécie" in pl or "especie" in pl:
+                data["pet_especie"] = val(p)
+            elif "raça" in pl or "raca" in pl:
+                data["pet_raca"] = val(p)
+            elif pl.startswith("sexo"):
+                data["pet_sexo"] = val(p)
+            elif "data de nascimento" in pl:
+                data["pet_nascimento"] = val(p)
 
     return data
 
@@ -107,12 +112,15 @@ def ocr_dietalabs(image_bytes: bytes, api_key: str = "") -> tuple[list[tuple[str
 
     prompt = (
         "Você está vendo um print do sistema Dietalabs de nutrição veterinária.\n\n"
-        "Extraia a lista de ingredientes com suas quantidades em gramas e o total.\n\n"
+        "Extraia a lista de ingredientes com suas quantidades e o total.\n\n"
         "Retorne APENAS um JSON válido neste formato exato (sem texto antes ou depois, sem markdown):\n"
-        '{"ingredientes": [{"nome": "Nome do ingrediente", "quantidade": "100"}, ...], "total": "337"}\n\n'
+        '{"ingredientes": [{"nome": "Nome do ingrediente", "quantidade": "50 gramas"}, ...], "total": "337 gramas"}\n\n'
         "Regras:\n"
-        "- quantidade: apenas o número, sem 'g' ou unidade\n"
-        "- total: apenas o número, sem 'g'\n"
+        "- quantidade: número seguido da unidade escrita por extenso\n"
+        "  Exemplos: '50 gramas', '100 gramas', '4 ml', '1 grama'\n"
+        "  Use 'grama' (singular) para valor 1, 'gramas' para os demais\n"
+        "  Se a unidade for ml, mantenha 'ml'\n"
+        "- total: número seguido de 'gramas' (ex: '337 gramas')\n"
         "- Ignore o cabeçalho 'Lista de ingredientes'\n"
         "- Ignore o botão × ao lado de cada ingrediente"
     )
@@ -337,7 +345,7 @@ def main():
                 st.warning("Sem chave de API: preencha os ingredientes manualmente.")
 
         st.markdown("---")
-        st.caption("Apsirtus Clínica Veterinária")
+        st.caption("Apsirtos Clínica Veterinária")
 
     # ── Passo 1: Ficha do cliente ─────────────────────────────────────────────
     st.subheader("1. Ficha do cliente")

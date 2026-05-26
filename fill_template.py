@@ -2,20 +2,25 @@
 """
 fill_template.py
 ================
-Preenche templates .docx de plano alimentar veterinario (Apsirtus) e retorna
+Preenche templates .docx de plano alimentar veterinario (Apsirtos) e retorna
 os bytes do documento pronto para conversao via LibreOffice.
 """
 
 from __future__ import annotations
 
 import io
+import os
 from typing import List, Tuple
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Inches, Pt, RGBColor
+
+# Caminho para a assinatura digital (relativo a este arquivo)
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+_SIG_PATH   = os.path.join(_ASSETS_DIR, "assinatura.png")
 
 
 class _C:
@@ -266,7 +271,7 @@ def _build_ingredients_table(
         _set_cell_margins(c1, top=0, bottom=0, left=160, right=160)
         _cell_valign(c1, "center")
         p1 = c1.paragraphs[0]
-        p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p1.alignment = WD_ALIGN_PARAGRAPH.LEFT
         _para_space(p1, before=0, after=0)
         r1 = p1.add_run(str(qty))
         r1.font.name = "Arial"
@@ -274,6 +279,90 @@ def _build_ingredients_table(
         r1.font.color.rgb = _C.TEXT_DARK
 
     return table._tbl
+
+
+def _add_signature_at_end(doc: Document) -> None:
+    """Adiciona bloco de assinatura ao final do documento (para exames e prescrição)."""
+    # Linha separadora
+    p_sep = doc.add_paragraph()
+    pPr = p_sep._element.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "6")
+    bot.set(qn("w:space"), "1"); bot.set(qn("w:color"), "2E86C1")
+    pBdr.append(bot); pPr.append(pBdr)
+    _para_space(p_sep, before=300, after=100)
+
+    # Imagem da assinatura
+    p_img = doc.add_paragraph()
+    _para_space(p_img, before=60, after=20)
+    if os.path.exists(_SIG_PATH):
+        p_img.add_run().add_picture(_SIG_PATH, width=Inches(2.2))
+
+    # Nome
+    p_name = doc.add_paragraph()
+    _para_space(p_name, before=0, after=0)
+    run = p_name.add_run("Isabelle Rizzo Assumpção")
+    run.bold = True; run.font.name = "Arial"; run.font.size = Pt(10)
+    run.font.color.rgb = RGBColor(0x1A, 0x52, 0x76)
+
+    # CRMV
+    p_crmv = doc.add_paragraph()
+    _para_space(p_crmv, before=0, after=0)
+    run = p_crmv.add_run("MV — CRMV 48652/SP")
+    run.font.name = "Arial"; run.font.size = Pt(9)
+    run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+
+
+def _add_signature_before_pagebreak(doc: Document) -> None:
+    """Insere bloco de assinatura antes do primeiro salto de página (para dieta)."""
+    body = doc.element.body
+
+    # Localiza o primeiro parágrafo com quebra de página
+    first_pb_para = None
+    for child in list(body):
+        if child.tag == qn("w:p"):
+            for br in child.findall(".//" + qn("w:br")):
+                if br.get(qn("w:type")) == "page":
+                    first_pb_para = child
+                    break
+        if first_pb_para is not None:
+            break
+
+    # Cria os elementos de assinatura no final do documento…
+    p_sep = doc.add_paragraph()
+    pPr = p_sep._element.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "6")
+    bot.set(qn("w:space"), "1"); bot.set(qn("w:color"), "2E86C1")
+    pBdr.append(bot); pPr.append(pBdr)
+    _para_space(p_sep, before=300, after=100)
+
+    p_img = doc.add_paragraph()
+    _para_space(p_img, before=60, after=20)
+    if os.path.exists(_SIG_PATH):
+        p_img.add_run().add_picture(_SIG_PATH, width=Inches(2.2))
+
+    p_name = doc.add_paragraph()
+    _para_space(p_name, before=0, after=0)
+    run = p_name.add_run("Isabelle Rizzo Assumpção")
+    run.bold = True; run.font.name = "Arial"; run.font.size = Pt(10)
+    run.font.color.rgb = RGBColor(0x1A, 0x52, 0x76)
+
+    p_crmv = doc.add_paragraph()
+    _para_space(p_crmv, before=0, after=0)
+    run = p_crmv.add_run("MV — CRMV 48652/SP")
+    run.font.name = "Arial"; run.font.size = Pt(9)
+    run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+
+    # …e move-os para antes do salto de página (se existir)
+    if first_pb_para is not None:
+        elements = [p_sep._element, p_img._element, p_name._element, p_crmv._element]
+        for el in elements:
+            body.remove(el)
+        for el in elements:
+            first_pb_para.addprevious(el)
 
 
 def fill_template(
@@ -309,6 +398,8 @@ def fill_template(
     sample_tbl_el = sample_table._tbl
     sample_tbl_el.addprevious(tbl_el)
     sample_tbl_el.getparent().remove(sample_tbl_el)
+
+    _add_signature_before_pagebreak(doc)
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -385,6 +476,8 @@ def fill_exames(
 
     # Remove o paragrafo marcador
     marker._element.getparent().remove(marker._element)
+
+    _add_signature_at_end(doc)
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -494,7 +587,7 @@ def _presc_header(doc):
     _pcm(cell, top=200, bottom=200, left=240, right=240)
     _pcbn(cell)
     p1 = cell.paragraphs[0]
-    _pr(p1, 'Apsirtus Clinica Veterinaria', bold=True, size_pt=16, color=_PRESC_WHITE_R)
+    _pr(p1, 'Apsirtos Clinica Veterinaria', bold=True, size_pt=16, color=_PRESC_WHITE_R)
     _para_space(p1, before=0, after=50)
     p2 = cell.add_paragraph()
     _pr(p2, 'Isabelle Rizzo Assumpção  —  CRMV 48652/SP', size_pt=10, color=_PRESC_AED6F1)
@@ -628,6 +721,8 @@ def fill_prescricao(
                 _para_space(p_instr, before=0, after=120)
 
                 counter += 1
+
+        _add_signature_at_end(doc)
 
         if page_idx < len(pages) - 1:
             p_br = doc.add_paragraph()
