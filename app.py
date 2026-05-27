@@ -12,7 +12,7 @@ from pathlib import Path
 from docx import Document
 from PIL import Image
 import pytesseract
-from pypdf import PdfWriter, PdfReader
+from pypdf import PdfWriter, PdfReader, Transformation
 import anthropic
 
 from fill_template import (
@@ -167,6 +167,52 @@ def _soffice_path() -> str:
     return "libreoffice"
 
 
+def _stamp_signature_on_pdf(pdf_bytes: bytes) -> bytes:
+    """Adiciona assinatura digital diretamente no PDF via PIL+pypdf.
+
+    Funciona independente do LibreOffice — sobrepõe a imagem PNG como stamp
+    em cada página do PDF na posição medida do rodapé.
+    """
+    sig_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "assinatura.png")
+    if not os.path.exists(sig_path):
+        return pdf_bytes
+    try:
+        # Dimensões do stamp (medidas do rodapé gerado localmente)
+        SIG_W_PT = 108          # 1.5 inches em pontos PDF
+        SIG_H_PT = int(SIG_W_PT * 200 / 710)  # ~30 pt (proporcional 710×200)
+        X_PT     = 57           # margem esquerda (~2 cm)
+        Y_PT     = 88           # base da assinatura a partir do fundo da página
+
+        # Redimensionar PNG para o tamanho alvo (72 DPI → 1pt = 1px)
+        sig_img = Image.open(sig_path).convert("RGB")
+        sig_resized = sig_img.resize((SIG_W_PT, SIG_H_PT), Image.LANCZOS)
+
+        # Salvar assinatura como mini-PDF (página = tamanho da imagem)
+        sig_pdf_buf = io.BytesIO()
+        sig_resized.save(sig_pdf_buf, format="PDF", resolution=72)
+        sig_pdf_buf.seek(0)
+
+        # Carregar, posicionar e expandir para A4
+        stamp_reader = PdfReader(sig_pdf_buf)
+        stamp_page   = stamp_reader.pages[0]
+        stamp_page.add_transformation(Transformation().translate(X_PT, Y_PT))
+        stamp_page.mediabox.lower_left  = (0, 0)
+        stamp_page.mediabox.upper_right = (595.28, 841.89)
+
+        # Mesclar stamp em cada página
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        writer = PdfWriter()
+        for page in reader.pages:
+            page.merge_page(stamp_page)
+            writer.add_page(page)
+
+        out = io.BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception:
+        return pdf_bytes  # fallback: retorna PDF sem assinatura
+
+
 def convert_to_pdf(docx_bytes: bytes) -> bytes:
     soffice = _soffice_path()
     with tempfile.TemporaryDirectory() as tmp:
@@ -183,7 +229,8 @@ def convert_to_pdf(docx_bytes: bytes) -> bytes:
         if not os.path.exists(pdf_path):
             raise RuntimeError("LibreOffice não gerou o PDF esperado.")
         with open(pdf_path, "rb") as f:
-            return f.read()
+            pdf = f.read()
+    return _stamp_signature_on_pdf(pdf)
 
 
 def generate_dieta_pdf(template_path: str, data: dict, opcoes: list) -> bytes:
