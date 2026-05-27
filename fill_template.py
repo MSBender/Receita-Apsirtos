@@ -281,88 +281,62 @@ def _build_ingredients_table(
     return table._tbl
 
 
+def _add_signature_to_footer(doc: Document) -> None:
+    """Insere a assinatura no rodapé, ACIMA da linha separadora.
+
+    Estratégia: adiciona parágrafo com imagem na célula esquerda da tabela do
+    rodapé, como primeiro parágrafo (antes do separador). O parágrafo é criado
+    via left_cell.add_paragraph() (contexto correto do footer part para registrar
+    o relacionamento da imagem), depois movido para antes do Para[0].
+    A célula direita recebe vAlign=bottom para manter a data alinhada à base.
+
+    Medidas: assinatura recortada = 710×200 px @ Inches(1.5) → ~1.07 cm de altura.
+    Rodapé expandido para 2.7 cm (bottom_margin=3.5, footer_distance=0.8).
+    """
+    if not os.path.exists(_SIG_PATH):
+        return
+
+    for section in doc.sections:
+        try:
+            footer = section.footer
+            if not footer.tables:
+                continue
+
+            left_cell  = footer.tables[0].rows[0].cells[0]
+            right_cell = footer.tables[0].rows[0].cells[1]
+
+            # 1. Adicionar parágrafo com imagem ao final da célula esquerda
+            #    (contexto correto do footer part → add_picture registra rId certo)
+            sig_para = left_cell.add_paragraph()
+            _para_space(sig_para, before=0, after=60)
+            sig_para.add_run().add_picture(_SIG_PATH, width=Inches(1.5))
+
+            # 2. Mover para ANTES do Para[0] (linha separadora)
+            first_para_el = left_cell.paragraphs[0]._element
+            sig_para._element.getparent().remove(sig_para._element)
+            first_para_el.addprevious(sig_para._element)
+
+            # 3. Célula direita: vAlign=bottom para manter data alinhada à base
+            tcPr = right_cell._tc.get_or_add_tcPr()
+            existing_va = tcPr.find(qn("w:vAlign"))
+            if existing_va is not None:
+                tcPr.remove(existing_va)
+            vAlign_el = OxmlElement("w:vAlign")
+            vAlign_el.set(qn("w:val"), "bottom")
+            tcPr.append(vAlign_el)
+
+        except Exception:
+            pass
+
+
 def _add_signature_at_end(doc: Document) -> None:
-    """Adiciona bloco de assinatura ao final do documento (para exames e prescrição)."""
-    # Linha separadora
-    p_sep = doc.add_paragraph()
-    pPr = p_sep._element.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bot = OxmlElement("w:bottom")
-    bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "6")
-    bot.set(qn("w:space"), "1"); bot.set(qn("w:color"), "2E86C1")
-    pBdr.append(bot); pPr.append(pBdr)
-    _para_space(p_sep, before=300, after=100)
-
-    # Imagem da assinatura
-    p_img = doc.add_paragraph()
-    _para_space(p_img, before=60, after=20)
-    if os.path.exists(_SIG_PATH):
-        p_img.add_run().add_picture(_SIG_PATH, width=Inches(2.2))
-
-    # Nome
-    p_name = doc.add_paragraph()
-    _para_space(p_name, before=0, after=0)
-    run = p_name.add_run("Isabelle Rizzo Assumpção")
-    run.bold = True; run.font.name = "Arial"; run.font.size = Pt(10)
-    run.font.color.rgb = RGBColor(0x1A, 0x52, 0x76)
-
-    # CRMV
-    p_crmv = doc.add_paragraph()
-    _para_space(p_crmv, before=0, after=0)
-    run = p_crmv.add_run("MV — CRMV 48652/SP")
-    run.font.name = "Arial"; run.font.size = Pt(9)
-    run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+    """Adiciona assinatura no rodapé (para exames e prescrição)."""
+    _add_signature_to_footer(doc)
 
 
 def _add_signature_before_pagebreak(doc: Document) -> None:
-    """Insere bloco de assinatura antes do primeiro salto de página (para dieta)."""
-    body = doc.element.body
-
-    # Localiza o primeiro parágrafo com quebra de página
-    first_pb_para = None
-    for child in list(body):
-        if child.tag == qn("w:p"):
-            for br in child.findall(".//" + qn("w:br")):
-                if br.get(qn("w:type")) == "page":
-                    first_pb_para = child
-                    break
-        if first_pb_para is not None:
-            break
-
-    # Cria os elementos de assinatura no final do documento…
-    p_sep = doc.add_paragraph()
-    pPr = p_sep._element.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bot = OxmlElement("w:bottom")
-    bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "6")
-    bot.set(qn("w:space"), "1"); bot.set(qn("w:color"), "2E86C1")
-    pBdr.append(bot); pPr.append(pBdr)
-    _para_space(p_sep, before=300, after=100)
-
-    p_img = doc.add_paragraph()
-    _para_space(p_img, before=60, after=20)
-    if os.path.exists(_SIG_PATH):
-        p_img.add_run().add_picture(_SIG_PATH, width=Inches(2.2))
-
-    p_name = doc.add_paragraph()
-    _para_space(p_name, before=0, after=0)
-    run = p_name.add_run("Isabelle Rizzo Assumpção")
-    run.bold = True; run.font.name = "Arial"; run.font.size = Pt(10)
-    run.font.color.rgb = RGBColor(0x1A, 0x52, 0x76)
-
-    p_crmv = doc.add_paragraph()
-    _para_space(p_crmv, before=0, after=0)
-    run = p_crmv.add_run("MV — CRMV 48652/SP")
-    run.font.name = "Arial"; run.font.size = Pt(9)
-    run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
-
-    # …e move-os para antes do salto de página (se existir)
-    if first_pb_para is not None:
-        elements = [p_sep._element, p_img._element, p_name._element, p_crmv._element]
-        for el in elements:
-            body.remove(el)
-        for el in elements:
-            first_pb_para.addprevious(el)
+    """Adiciona assinatura no rodapé (para dieta)."""
+    _add_signature_to_footer(doc)
 
 
 def fill_template(
