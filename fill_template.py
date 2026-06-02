@@ -712,3 +712,210 @@ def fill_prescricao(
     doc.save(buffer)
     buffer.seek(0)
     return buffer.read()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INSTRUÇÕES DIETA DE ELIMINAÇÃO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_eliminacao_instructions_docx(subtipo: str) -> bytes:
+    """Gera o docx das instruções de dieta de eliminação.
+
+    Parameters
+    ----------
+    subtipo : str
+        'caseira' — 3 páginas (eliminação + preparo caseiro)
+        'racao'   — 2 páginas (só eliminação)
+
+    Returns
+    -------
+    bytes  — conteúdo do .docx pronto para convert_to_pdf()
+    """
+    from docx.shared import Cm
+
+    doc = Document()
+
+    for sec in doc.sections:
+        sec.top_margin    = Cm(2.0)
+        sec.bottom_margin = Cm(3.5)
+        sec.left_margin   = Cm(2.5)
+        sec.right_margin  = Cm(2.5)
+
+    TEAL = RGBColor(0x1A, 0x52, 0x76)
+    DARK = RGBColor(0x1C, 0x28, 0x33)
+
+    def _title(text):
+        p = doc.add_paragraph()
+        run = p.add_run(text)
+        run.bold = True
+        run.font.name = "Arial"
+        run.font.size = Pt(14)
+        run.font.color.rgb = TEAL
+        _para_space(p, before=0, after=200)
+
+    def _subtitle(text):
+        p = doc.add_paragraph()
+        run = p.add_run(text)
+        run.bold = True
+        run.font.name = "Arial"
+        run.font.size = Pt(11)
+        run.font.color.rgb = TEAL
+        _para_space(p, before=200, after=120)
+
+    def _intro(text):
+        p = doc.add_paragraph()
+        run = p.add_run(text)
+        run.font.name = "Arial"
+        run.font.size = Pt(11)
+        run.font.color.rgb = DARK
+        _para_space(p, before=0, after=160)
+
+    def _section(num, text):
+        p = doc.add_paragraph()
+        run = p.add_run(f"{num}. {text}")
+        run.bold = True
+        run.font.name = "Arial"
+        run.font.size = Pt(11)
+        run.font.color.rgb = TEAL
+        _para_space(p, before=160, after=60)
+
+    def _bullet(text, level=1):
+        p = doc.add_paragraph()
+        pPr = p._element.get_or_add_pPr()
+        ind = OxmlElement("w:ind")
+        ind.set(qn("w:left"), str(360 * level))
+        ind.set(qn("w:hanging"), "180")
+        pPr.append(ind)
+        _para_space(p, before=0, after=60)
+        char = "•" if level == 1 else "◦"
+        run = p.add_run(f"{char} {text}")
+        run.font.name = "Arial"
+        run.font.size = Pt(11)
+        run.font.color.rgb = DARK
+
+    def _page_break():
+        p = doc.add_paragraph()
+        run = p.add_run()
+        br = OxmlElement("w:br")
+        br.set(qn("w:type"), "page")
+        run._r.append(br)
+        _para_space(p, before=0, after=0)
+
+    # ── Página 1: seções 1–4 ──────────────────────────────────────────────────
+    _title("INSTRUCOES SOBRE DIETA DE ELIMINACAO")
+    _intro(
+        "A dieta de eliminacao tem como objetivo identificar possiveis alimentos "
+        "envolvidos em reacoes adversas, como alergias ou intolerancias alimentares."
+    )
+
+    _section(1, "Composicao da dieta")
+    _bullet(
+        "A dieta devera conter apenas uma fonte de proteina animal e uma fonte de "
+        "carboidrato, que o animal nunca tenha consumido anteriormente OU uma dieta "
+        "com proteina extensamente hidrolisada e inedita, conforme prescricao."
+    )
+    _bullet("Nao realizar substituicoes ou acrescimos sem orientacao profissional.")
+
+    _section(2, "Exclusividade da dieta")
+    _bullet("Durante o periodo da dieta de eliminacao, o animal NAO pode receber:")
+    for item in [
+        "Petiscos", "Ossos", "Biscoitos",
+        "Frutas, legumes extras", "Restos de comida",
+        "Suplementos, medicamentos palatáveis ou pastas com sabor",
+    ]:
+        _bullet(item, level=2)
+    _bullet("Agua esta liberada a vontade.")
+
+    _section(3, "Periodo minimo")
+    _bullet("A dieta deve ser seguida de forma rigorosa por no minimo 8 semanas.")
+    _bullet(
+        "Melhoras parciais podem ocorrer antes, mas nao interromper a dieta "
+        "antes do periodo recomendado."
+    )
+
+    _section(4, "Manejo alimentar")
+    _bullet("Dividir a alimentacao diaria em 2 a 3 refeicoes, respeitando os horarios.")
+    _bullet("Manter rotina alimentar estavel, sem variacoes de preparo ou ingredientes.")
+
+    # ── Página 2: seções 5–6 + aviso ─────────────────────────────────────────
+    _page_break()
+    _title("INSTRUCOES SOBRE DIETA DE ELIMINACAO")
+
+    _section(5, "Avaliacao clinica")
+    _bullet(
+        "Sinais como prurido, lesoes de pele, otites, vomitos ou diarreia devem "
+        "ser monitorados e relatados."
+    )
+    _bullet(
+        "Caso ocorra ingestao acidental de outro alimento, a dieta pode precisar "
+        "ser reiniciada."
+    )
+
+    _section(6, "Fase de desafio alimentar")
+    _bullet(
+        "Apos o periodo de eliminacao e melhora clinica, novos alimentos so deverao "
+        "ser reintroduzidos com orientacao profissional, um por vez, para identificacao "
+        "do possivel agente causador."
+    )
+
+    p_warn = doc.add_paragraph()
+    _para_space(p_warn, before=200, after=80)
+    r_warn = p_warn.add_run(
+        "O sucesso da dieta depende diretamente do cumprimento rigoroso das "
+        "orientacoes. Qualquer excecao pode comprometer o diagnostico."
+    )
+    r_warn.bold = True
+    r_warn.font.name = "Arial"
+    r_warn.font.size = Pt(11)
+    r_warn.font.color.rgb = DARK
+
+    # ── Página 3 (apenas caseira): instruções gerais de preparo ───────────────
+    if subtipo == "caseira":
+        _page_break()
+        _title("INSTRUCOES GERAIS DA DIETA")
+        _subtitle("ORIENTACOES ESSENCIAIS PARA O PREPARO DA DIETA CASEIRA")
+        _intro(
+            "Esta dieta foi formulada especificamente para o seu pet. Para garantir "
+            "que ele receba todos os nutrientes de forma segura e equilibrada, siga "
+            "as orientacoes abaixo:"
+        )
+
+        _section(1, "Nao faca substituicoes ou alteracoes")
+        _bullet("Nao troque ingredientes nem mude quantidades.")
+        _bullet(
+            "Toda a proporcao foi calculada individualmente. Ajustes sem orientacao "
+            "podem desbalancear a dieta e prejudicar a saude do animal."
+        )
+        _bullet("Forneca o suplemento apenas no momento de servir o alimento.")
+
+        _section(2, "Modo de preparo")
+        _bullet(
+            "Siga exatamente o indicado. A forma de preparo influencia diretamente "
+            "na digestibilidade e aproveitamento dos nutrientes."
+        )
+        _bullet("Como pesar os ingredientes: pesar apos o preparo.")
+        _bullet(
+            "Cozido: Cozinhe em agua, sem oleo, sem sal e sem temperos. Nao utilize "
+            "caldos prontos. Graos devem ficar 12 horas de molho antes de cozinhar."
+        )
+        _bullet("Assado: Forno ou airfryer ate 200 graus Celsius, sem oleo ou temperos.")
+        _bullet(
+            "Refogado: Use apenas uma pequena quantidade de agua para ajudar no "
+            "cozimento. Nunca use oleo. Refogue por poucos minutos, com tampa, sem dourar."
+        )
+
+        _subtitle("HIGIENE E SEGURANCA ALIMENTAR")
+        _bullet(
+            "Evite contaminacao cruzada: lave bem maos, utensilios e superficies "
+            "entre o manuseio de carnes cruas e outros alimentos."
+        )
+        _bullet("Armazenamento: Geladeira: ate 3 dias. Freezer: ate 90 dias.")
+        _bullet(
+            "Guarde sempre em recipientes limpos, bem vedados e porcoes individuais "
+            "para facilitar o uso."
+        )
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.read()

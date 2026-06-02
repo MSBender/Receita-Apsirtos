@@ -16,9 +16,10 @@ from pypdf import PdfWriter, PdfReader, Transformation
 import anthropic
 
 from fill_template import (
-    fill_template   as _fill_dieta,
-    fill_exames     as _fill_exames,
-    fill_prescricao as _fill_prescricao,
+    fill_template                        as _fill_dieta,
+    fill_exames                          as _fill_exames,
+    fill_prescricao                      as _fill_prescricao,
+    build_eliminacao_instructions_docx   as _build_eliminacao,
 )
 
 # ── Tesseract (Windows) ───────────────────────────────────────────────────────
@@ -38,8 +39,8 @@ MESES = [
 ]
 
 TEMPLATES = {
-    "🥩 Dieta Caseira":         {"path": "templates/template_dieta_caseira.docx", "tipo": "dieta"},
-    "🐾 Ração":                 {"path": "templates/template_dieta_racao.docx",   "tipo": "dieta"},
+    "🥩 Dieta Caseira":         {"path": "templates/template_dieta_caseira.docx", "tipo": "dieta", "subtipo": "caseira"},
+    "🐾 Ração":                 {"path": "templates/template_dieta_racao.docx",   "tipo": "dieta", "subtipo": "racao"},
     "💊 Prescrição":            {"path": "templates/template_prescricao.docx",    "tipo": "prescricao"},
     "🔬 Solicitação de Exames": {"path": "templates/template_exames.docx",        "tipo": "exames"},
 }
@@ -233,7 +234,8 @@ def convert_to_pdf(docx_bytes: bytes) -> bytes:
     return _stamp_signature_on_pdf(pdf)
 
 
-def generate_dieta_pdf(template_path: str, data: dict, opcoes: list) -> bytes:
+def generate_dieta_pdf(template_path: str, data: dict, opcoes: list,
+                       eliminacao: bool = False, subtipo: str = "caseira") -> bytes:
     data_com_data = dict(data)
     data_com_data["data"] = _data_extenso()
 
@@ -247,7 +249,12 @@ def generate_dieta_pdf(template_path: str, data: dict, opcoes: list) -> bytes:
     for pdf_bytes in pdfs_opcoes:
         reader = PdfReader(io.BytesIO(pdf_bytes))
         writer.append(reader, pages=(0, 1))
-    if pdfs_opcoes:
+
+    if eliminacao:
+        with st.spinner("Gerando instruções de dieta de eliminação..."):
+            instr_pdf = convert_to_pdf(_build_eliminacao(subtipo))
+        writer.append(PdfReader(io.BytesIO(instr_pdf)))
+    elif pdfs_opcoes:
         reader = PdfReader(io.BytesIO(pdfs_opcoes[0]))
         n = len(reader.pages)
         if n > 1:
@@ -376,6 +383,7 @@ def main():
         template_info = TEMPLATES[template_key]
         template_path = template_info["path"]
         tipo          = template_info["tipo"]
+        subtipo       = template_info.get("subtipo", "")
         st.markdown("---")
 
         _env_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -426,10 +434,15 @@ def main():
     opcoes:    list = []
     exames:    list = []
     vias_data: list = []
+    eliminacao: bool  = False
     conteudo_ok = False
 
     # ── DIETA ─────────────────────────────────────────────────────────────────
     if tipo == "dieta":
+        eliminacao = st.checkbox(
+            "🔬 Dieta de Eliminação",
+            help="Substitui as instruções do documento pelas orientações específicas de dieta de eliminação.",
+        )
         st.caption("Envie um ou mais prints do Dietalabs — cada um será uma Opção no plano.")
         imagens = st.file_uploader(
             "Prints (PNG ou JPG)",
@@ -523,7 +536,8 @@ def main():
         else:
             try:
                 if tipo == "dieta":
-                    pdf_bytes = generate_dieta_pdf(template_path, anamnese, opcoes)
+                    pdf_bytes = generate_dieta_pdf(template_path, anamnese, opcoes,
+                                                       eliminacao=eliminacao, subtipo=subtipo)
                 elif tipo == "exames":
                     pdf_bytes = generate_exames_pdf(template_path, anamnese, exames)
                 elif tipo == "prescricao":
