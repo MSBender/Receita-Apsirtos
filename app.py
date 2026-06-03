@@ -252,7 +252,7 @@ def generate_dieta_pdf(template_path: str, data: dict, opcoes: list,
 
     if eliminacao:
         with st.spinner("Gerando instruções de dieta de eliminação..."):
-            instr_pdf = convert_to_pdf(_build_eliminacao(subtipo))
+            instr_pdf = convert_to_pdf(_build_eliminacao(subtipo, data_com_data.get("data", "")))
         writer.append(PdfReader(io.BytesIO(instr_pdf)))
     elif pdfs_opcoes:
         reader = PdfReader(io.BytesIO(pdfs_opcoes[0]))

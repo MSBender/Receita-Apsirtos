@@ -212,7 +212,7 @@ def _build_ingredients_table(
     ingredients: List[Tuple[str, str]],
 ) -> object:
     CONTENT_W = 9638
-    COL_INGR  = int(CONTENT_W * 0.745)
+    COL_INGR  = int(CONTENT_W * 0.80)
     COL_QTD   = CONTENT_W - COL_INGR
 
     table = doc.add_table(rows=0, cols=2)
@@ -234,7 +234,7 @@ def _build_ingredients_table(
         _set_cell_margins(cell, top=0, bottom=0, left=160, right=160)
         _cell_valign(cell, "center")
         p = cell.paragraphs[0]
-        p.alignment = (WD_ALIGN_PARAGRAPH.CENTER if idx == 1
+        p.alignment = (WD_ALIGN_PARAGRAPH.RIGHT if idx == 1
                        else WD_ALIGN_PARAGRAPH.LEFT)
         _para_space(p, before=0, after=0)
         run = p.add_run(header_text)
@@ -718,7 +718,82 @@ def fill_prescricao(
 # INSTRUÇÕES DIETA DE ELIMINAÇÃO
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_eliminacao_instructions_docx(subtipo: str) -> bytes:
+def _build_footer_for_new_doc(doc: Document, data_extenso: str) -> None:
+    """Cria rodapé com nome/CRMV/data para documentos gerados do zero."""
+    from docx.shared import Cm as _Cm
+
+    section = doc.sections[0]
+    section.footer_distance = _Cm(0.8)
+    footer = section.footer
+    footer.is_linked_to_previous = False
+
+    ftr = footer._element
+    for child in list(ftr):
+        ftr.remove(child)
+
+    def _run(text, bold=False, size_pt=9, color="1C2833"):
+        r = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        if bold:
+            rPr.append(OxmlElement("w:b"))
+        rf = OxmlElement("w:rFonts")
+        rf.set(qn("w:ascii"), "Arial")
+        rf.set(qn("w:hAnsi"), "Arial")
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), str(int(size_pt * 2)))
+        cl = OxmlElement("w:color")
+        cl.set(qn("w:val"), color)
+        rPr.extend([rf, sz, cl])
+        r.append(rPr)
+        t = OxmlElement("w:t")
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        t.text = text
+        r.append(t)
+        return r
+
+    def _add_para(align=None, before=0, after=0, border_bottom=False):
+        p = OxmlElement("w:p")
+        pPr = OxmlElement("w:pPr")
+        sp = OxmlElement("w:spacing")
+        sp.set(qn("w:before"), str(before))
+        sp.set(qn("w:after"), str(after))
+        pPr.append(sp)
+        if align:
+            jc = OxmlElement("w:jc")
+            jc.set(qn("w:val"), align)
+            pPr.append(jc)
+        if border_bottom:
+            pBdr = OxmlElement("w:pBdr")
+            bot = OxmlElement("w:bottom")
+            bot.set(qn("w:val"), "single")
+            bot.set(qn("w:sz"), "6")
+            bot.set(qn("w:space"), "1")
+            bot.set(qn("w:color"), "2E86C1")
+            pBdr.append(bot)
+            pPr.append(pBdr)
+        p.append(pPr)
+        ftr.append(p)
+        return p
+
+    # Espaço para assinatura (estampada via PDF stamp)
+    _add_para(before=0, after=560)
+    # Linha separadora
+    _add_para(before=0, after=60, border_bottom=True)
+    # Nome
+    p_nome = _add_para(before=0, after=20)
+    p_nome.append(_run("Isabelle Rizzo Assumpção", bold=True, size_pt=9))
+    # CRMV e título
+    p_crmv = _add_para(before=0, after=0)
+    p_crmv.append(_run(
+        "CRMV 48652/SP  •  Médica Veterinária - Nutricionista Animal",
+        size_pt=8, color="555555",
+    ))
+    # Data de emissão (alinhada à direita)
+    p_data = _add_para(align="right", before=40, after=0)
+    p_data.append(_run("Data de emissão: " + (data_extenso or ""), size_pt=9))
+
+
+def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> bytes:
     """Gera o docx das instruções de dieta de eliminação.
 
     Parameters
@@ -726,20 +801,22 @@ def build_eliminacao_instructions_docx(subtipo: str) -> bytes:
     subtipo : str
         'caseira' — 3 páginas (eliminação + preparo caseiro)
         'racao'   — 2 páginas (só eliminação)
+    data_extenso : str
+        Data por extenso para o rodapé (ex: "3 DE JUNHO DE 2026")
 
     Returns
     -------
     bytes  — conteúdo do .docx pronto para convert_to_pdf()
     """
-    from docx.shared import Cm
+    from docx.shared import Cm as _Cm
 
     doc = Document()
 
     for sec in doc.sections:
-        sec.top_margin    = Cm(2.0)
-        sec.bottom_margin = Cm(3.5)
-        sec.left_margin   = Cm(2.5)
-        sec.right_margin  = Cm(2.5)
+        sec.top_margin    = _Cm(2.0)
+        sec.bottom_margin = _Cm(3.5)
+        sec.left_margin   = _Cm(2.5)
+        sec.right_margin  = _Cm(2.5)
 
     TEAL = RGBColor(0x1A, 0x52, 0x76)
     DARK = RGBColor(0x1C, 0x28, 0x33)
@@ -802,67 +879,67 @@ def build_eliminacao_instructions_docx(subtipo: str) -> bytes:
         _para_space(p, before=0, after=0)
 
     # ── Página 1: seções 1–4 ──────────────────────────────────────────────────
-    _title("INSTRUCOES SOBRE DIETA DE ELIMINACAO")
+    _title("INSTRUÇÕES SOBRE DIETA DE ELIMINAÇÃO")
     _intro(
-        "A dieta de eliminacao tem como objetivo identificar possiveis alimentos "
-        "envolvidos em reacoes adversas, como alergias ou intolerancias alimentares."
+        "A dieta de eliminação tem como objetivo identificar possíveis alimentos "
+        "envolvidos em reações adversas, como alergias ou intolerâncias alimentares."
     )
 
-    _section(1, "Composicao da dieta")
+    _section(1, "Composição da dieta")
     _bullet(
-        "A dieta devera conter apenas uma fonte de proteina animal e uma fonte de "
+        "A dieta deverá conter apenas uma fonte de proteína animal e uma fonte de "
         "carboidrato, que o animal nunca tenha consumido anteriormente OU uma dieta "
-        "com proteina extensamente hidrolisada e inedita, conforme prescricao."
+        "com proteína extensamente hidrolisada e inédita, conforme prescrição."
     )
-    _bullet("Nao realizar substituicoes ou acrescimos sem orientacao profissional.")
+    _bullet("Não realizar substituições ou acréscimos sem orientação profissional.")
 
     _section(2, "Exclusividade da dieta")
-    _bullet("Durante o periodo da dieta de eliminacao, o animal NAO pode receber:")
+    _bullet("Durante o período da dieta de eliminação, o animal NÃO pode receber:")
     for item in [
         "Petiscos", "Ossos", "Biscoitos",
         "Frutas, legumes extras", "Restos de comida",
         "Suplementos, medicamentos palatáveis ou pastas com sabor",
     ]:
         _bullet(item, level=2)
-    _bullet("Agua esta liberada a vontade.")
+    _bullet("Água está liberada à vontade.")
 
-    _section(3, "Periodo minimo")
-    _bullet("A dieta deve ser seguida de forma rigorosa por no minimo 8 semanas.")
+    _section(3, "Período mínimo")
+    _bullet("A dieta deve ser seguida de forma rigorosa por no mínimo 8 semanas.")
     _bullet(
-        "Melhoras parciais podem ocorrer antes, mas nao interromper a dieta "
-        "antes do periodo recomendado."
+        "Melhoras parciais podem ocorrer antes, mas não interromper a dieta "
+        "antes do período recomendado."
     )
 
     _section(4, "Manejo alimentar")
-    _bullet("Dividir a alimentacao diaria em 2 a 3 refeicoes, respeitando os horarios.")
-    _bullet("Manter rotina alimentar estavel, sem variacoes de preparo ou ingredientes.")
+    _bullet("Dividir a alimentação diária em 2 a 3 refeições, respeitando os horários.")
+    _bullet("Manter rotina alimentar estável, sem variações de preparo ou ingredientes.")
 
     # ── Página 2: seções 5–6 + aviso ─────────────────────────────────────────
     _page_break()
-    _title("INSTRUCOES SOBRE DIETA DE ELIMINACAO")
+    _title("INSTRUÇÕES SOBRE DIETA DE ELIMINAÇÃO")
 
-    _section(5, "Avaliacao clinica")
+    _section(5, "Avaliação clínica")
     _bullet(
-        "Sinais como prurido, lesoes de pele, otites, vomitos ou diarreia devem "
+        "Sinais como prurido, lesões de pele, otites, vômitos ou diarreia devem "
         "ser monitorados e relatados."
     )
     _bullet(
-        "Caso ocorra ingestao acidental de outro alimento, a dieta pode precisar "
+        "Caso ocorra ingestão acidental de outro alimento, a dieta pode precisar "
         "ser reiniciada."
     )
 
     _section(6, "Fase de desafio alimentar")
     _bullet(
-        "Apos o periodo de eliminacao e melhora clinica, novos alimentos so deverao "
-        "ser reintroduzidos com orientacao profissional, um por vez, para identificacao "
-        "do possivel agente causador."
+        "Após o período de eliminação e melhora clínica, novos alimentos só deverão "
+        "ser reintroduzidos com orientação profissional, um por vez, para identificação "
+        "do possível agente causador."
     )
 
     p_warn = doc.add_paragraph()
     _para_space(p_warn, before=200, after=80)
     r_warn = p_warn.add_run(
         "O sucesso da dieta depende diretamente do cumprimento rigoroso das "
-        "orientacoes. Qualquer excecao pode comprometer o diagnostico."
+        "orientações. Qualquer exceção pode comprometer o diagnóstico."
     )
     r_warn.bold = True
     r_warn.font.name = "Arial"
@@ -872,48 +949,51 @@ def build_eliminacao_instructions_docx(subtipo: str) -> bytes:
     # ── Página 3 (apenas caseira): instruções gerais de preparo ───────────────
     if subtipo == "caseira":
         _page_break()
-        _title("INSTRUCOES GERAIS DA DIETA")
-        _subtitle("ORIENTACOES ESSENCIAIS PARA O PREPARO DA DIETA CASEIRA")
+        _title("INSTRUÇÕES GERAIS DA DIETA")
+        _subtitle("ORIENTAÇÕES ESSENCIAIS PARA O PREPARO DA DIETA CASEIRA")
         _intro(
             "Esta dieta foi formulada especificamente para o seu pet. Para garantir "
             "que ele receba todos os nutrientes de forma segura e equilibrada, siga "
-            "as orientacoes abaixo:"
+            "as orientações abaixo:"
         )
 
-        _section(1, "Nao faca substituicoes ou alteracoes")
-        _bullet("Nao troque ingredientes nem mude quantidades.")
+        _section(1, "Não faça substituições ou alterações")
+        _bullet("Não troque ingredientes nem mude quantidades.")
         _bullet(
-            "Toda a proporcao foi calculada individualmente. Ajustes sem orientacao "
-            "podem desbalancear a dieta e prejudicar a saude do animal."
+            "Toda a proporção foi calculada individualmente. Ajustes sem orientação "
+            "podem desbalancear a dieta e prejudicar a saúde do animal."
         )
-        _bullet("Forneca o suplemento apenas no momento de servir o alimento.")
+        _bullet("Forneça o suplemento apenas no momento de servir o alimento.")
 
         _section(2, "Modo de preparo")
         _bullet(
             "Siga exatamente o indicado. A forma de preparo influencia diretamente "
             "na digestibilidade e aproveitamento dos nutrientes."
         )
-        _bullet("Como pesar os ingredientes: pesar apos o preparo.")
+        _bullet("Como pesar os ingredientes: pesar após o preparo.")
         _bullet(
-            "Cozido: Cozinhe em agua, sem oleo, sem sal e sem temperos. Nao utilize "
-            "caldos prontos. Graos devem ficar 12 horas de molho antes de cozinhar."
+            "Cozido: Cozinhe em água, sem óleo, sem sal e sem temperos. Não utilize "
+            "caldos prontos. Grãos devem ficar 12 horas de molho antes de cozinhar."
         )
-        _bullet("Assado: Forno ou airfryer ate 200 graus Celsius, sem oleo ou temperos.")
+        _bullet("Assado: Forno ou airfryer até 200°C, sem óleo ou temperos.")
         _bullet(
-            "Refogado: Use apenas uma pequena quantidade de agua para ajudar no "
-            "cozimento. Nunca use oleo. Refogue por poucos minutos, com tampa, sem dourar."
+            "Refogado: Use apenas uma pequena quantidade de água para ajudar no "
+            "cozimento. Nunca use óleo. Refogue por poucos minutos, com tampa, sem dourar."
         )
 
-        _subtitle("HIGIENE E SEGURANCA ALIMENTAR")
+        _subtitle("HIGIENE E SEGURANÇA ALIMENTAR")
         _bullet(
-            "Evite contaminacao cruzada: lave bem maos, utensilios e superficies "
+            "Evite contaminação cruzada: lave bem mãos, utensílios e superfícies "
             "entre o manuseio de carnes cruas e outros alimentos."
         )
-        _bullet("Armazenamento: Geladeira: ate 3 dias. Freezer: ate 90 dias.")
+        _bullet("Armazenamento: Geladeira: até 3 dias. Freezer: até 90 dias.")
         _bullet(
-            "Guarde sempre em recipientes limpos, bem vedados e porcoes individuais "
+            "Guarde sempre em recipientes limpos, bem vedados e porções individuais "
             "para facilitar o uso."
         )
+
+    # Rodapé em todas as páginas
+    _build_footer_for_new_doc(doc, data_extenso)
 
     buf = io.BytesIO()
     doc.save(buf)
