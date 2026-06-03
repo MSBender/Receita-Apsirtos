@@ -234,8 +234,7 @@ def _build_ingredients_table(
         _set_cell_margins(cell, top=0, bottom=0, left=160, right=160)
         _cell_valign(cell, "center")
         p = cell.paragraphs[0]
-        p.alignment = (WD_ALIGN_PARAGRAPH.RIGHT if idx == 1
-                       else WD_ALIGN_PARAGRAPH.LEFT)
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         _para_space(p, before=0, after=0)
         run = p.add_run(header_text)
         run.bold = True
@@ -719,7 +718,7 @@ def fill_prescricao(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _build_footer_for_new_doc(doc: Document, data_extenso: str) -> None:
-    """Cria rodapé com nome/CRMV/data para documentos gerados do zero."""
+    """Cria rodapé idêntico ao do template (tabela 2 colunas) para docs gerados do zero."""
     from docx.shared import Cm as _Cm
 
     section = doc.sections[0]
@@ -731,18 +730,24 @@ def _build_footer_for_new_doc(doc: Document, data_extenso: str) -> None:
     for child in list(ftr):
         ftr.remove(child)
 
-    def _run(text, bold=False, size_pt=9, color="1C2833"):
+    FOOTER_W = 9638
+    LEFT_W   = 6264
+    RIGHT_W  = FOOTER_W - LEFT_W
+    DARK     = "1C2833"
+    GRAY     = "555555"
+    TEAL_M   = "2E86C1"
+
+    def _run_el(text, bold=False, italic=False, size_pt=9, color=DARK):
         r = OxmlElement("w:r")
         rPr = OxmlElement("w:rPr")
         if bold:
             rPr.append(OxmlElement("w:b"))
+        if italic:
+            rPr.append(OxmlElement("w:i"))
         rf = OxmlElement("w:rFonts")
-        rf.set(qn("w:ascii"), "Arial")
-        rf.set(qn("w:hAnsi"), "Arial")
-        sz = OxmlElement("w:sz")
-        sz.set(qn("w:val"), str(int(size_pt * 2)))
-        cl = OxmlElement("w:color")
-        cl.set(qn("w:val"), color)
+        rf.set(qn("w:ascii"), "Arial"); rf.set(qn("w:hAnsi"), "Arial")
+        sz = OxmlElement("w:sz"); sz.set(qn("w:val"), str(int(size_pt * 2)))
+        cl = OxmlElement("w:color"); cl.set(qn("w:val"), color)
         rPr.extend([rf, sz, cl])
         r.append(rPr)
         t = OxmlElement("w:t")
@@ -751,46 +756,80 @@ def _build_footer_for_new_doc(doc: Document, data_extenso: str) -> None:
         r.append(t)
         return r
 
-    def _add_para(align=None, before=0, after=0, border_bottom=False):
+    def _para_el(text="", bold=False, italic=False, size_pt=9, color=DARK,
+                 align=None, before=0, after=0, border_bottom=False):
         p = OxmlElement("w:p")
         pPr = OxmlElement("w:pPr")
         sp = OxmlElement("w:spacing")
-        sp.set(qn("w:before"), str(before))
-        sp.set(qn("w:after"), str(after))
+        sp.set(qn("w:before"), str(before)); sp.set(qn("w:after"), str(after))
         pPr.append(sp)
         if align:
-            jc = OxmlElement("w:jc")
-            jc.set(qn("w:val"), align)
-            pPr.append(jc)
+            jc = OxmlElement("w:jc"); jc.set(qn("w:val"), align); pPr.append(jc)
         if border_bottom:
             pBdr = OxmlElement("w:pBdr")
             bot = OxmlElement("w:bottom")
-            bot.set(qn("w:val"), "single")
-            bot.set(qn("w:sz"), "6")
-            bot.set(qn("w:space"), "1")
-            bot.set(qn("w:color"), "2E86C1")
-            pBdr.append(bot)
-            pPr.append(pBdr)
+            bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "6")
+            bot.set(qn("w:space"), "1"); bot.set(qn("w:color"), TEAL_M)
+            pBdr.append(bot); pPr.append(pBdr)
         p.append(pPr)
-        ftr.append(p)
+        if text:
+            p.append(_run_el(text, bold=bold, italic=italic, size_pt=size_pt, color=color))
         return p
 
-    # Espaço para assinatura (estampada via PDF stamp)
-    _add_para(before=0, after=560)
-    # Linha separadora
-    _add_para(before=0, after=60, border_bottom=True)
-    # Nome
-    p_nome = _add_para(before=0, after=20)
-    p_nome.append(_run("Isabelle Rizzo Assumpção", bold=True, size_pt=9))
-    # CRMV e título
-    p_crmv = _add_para(before=0, after=0)
-    p_crmv.append(_run(
-        "CRMV 48652/SP  •  Médica Veterinária - Nutricionista Animal",
-        size_pt=8, color="555555",
-    ))
-    # Data de emissão (alinhada à direita)
-    p_data = _add_para(align="right", before=40, after=0)
-    p_data.append(_run("Data de emissão: " + (data_extenso or ""), size_pt=9))
+    # ── Montar tabela do rodapé ──────────────────────────────────────────────
+    tbl = OxmlElement("w:tbl")
+
+    tblPr = OxmlElement("w:tblPr")
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:w"), str(FOOTER_W)); tblW.set(qn("w:type"), "dxa")
+    tblPr.append(tblW)
+    tblBdr = OxmlElement("w:tblBorders")
+    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"), "none"); b.set(qn("w:sz"), "0")
+        b.set(qn("w:space"), "0"); b.set(qn("w:color"), "auto")
+        tblBdr.append(b)
+    tblPr.append(tblBdr)
+    tbl.append(tblPr)
+
+    tr = OxmlElement("w:tr")
+
+    # ── Célula esquerda: separador + nome/CRMV + título ─────────────────────
+    tc_l = OxmlElement("w:tc")
+    tcPr_l = OxmlElement("w:tcPr")
+    tcW_l = OxmlElement("w:tcW")
+    tcW_l.set(qn("w:w"), str(LEFT_W)); tcW_l.set(qn("w:type"), "dxa")
+    tcPr_l.append(tcW_l)
+    tc_l.append(tcPr_l)
+    # Para 0: espaço para assinatura + linha separadora
+    tc_l.append(_para_el(before=0, after=560, border_bottom=True))
+    # Para 1: nome — CRMV (bold, matching template)
+    tc_l.append(_para_el("Isabelle Rizzo Assumpção — CRMV 48652/SP",
+                         bold=True, size_pt=9, color=DARK, before=60, after=20))
+    # Para 2: título (italic)
+    tc_l.append(_para_el("Médica Veterinária",
+                         italic=True, size_pt=8, color=GRAY, before=0, after=0))
+    tr.append(tc_l)
+
+    # ── Célula direita: data de emissão ──────────────────────────────────────
+    tc_r = OxmlElement("w:tc")
+    tcPr_r = OxmlElement("w:tcPr")
+    tcW_r = OxmlElement("w:tcW")
+    tcW_r.set(qn("w:w"), str(RIGHT_W)); tcW_r.set(qn("w:type"), "dxa")
+    tcPr_r.append(tcW_r)
+    vAlign = OxmlElement("w:vAlign"); vAlign.set(qn("w:val"), "bottom")
+    tcPr_r.append(vAlign)
+    tc_r.append(tcPr_r)
+    tc_r.append(_para_el("Data de emissão:",
+                         size_pt=9, color=DARK, align="right", before=0, after=20))
+    tc_r.append(_para_el(data_extenso or "",
+                         bold=True, size_pt=9, color=DARK, align="right", before=0, after=0))
+    tr.append(tc_r)
+
+    tbl.append(tr)
+    ftr.append(tbl)
+    # Parágrafo final obrigatório no footer
+    ftr.append(OxmlElement("w:p"))
 
 
 def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> bytes:
@@ -803,10 +842,6 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
         'racao'   — 2 páginas (só eliminação)
     data_extenso : str
         Data por extenso para o rodapé (ex: "3 DE JUNHO DE 2026")
-
-    Returns
-    -------
-    bytes  — conteúdo do .docx pronto para convert_to_pdf()
     """
     from docx.shared import Cm as _Cm
 
@@ -884,7 +919,6 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
         "A dieta de eliminação tem como objetivo identificar possíveis alimentos "
         "envolvidos em reações adversas, como alergias ou intolerâncias alimentares."
     )
-
     _section(1, "Composição da dieta")
     _bullet(
         "A dieta deverá conter apenas uma fonte de proteína animal e uma fonte de "
@@ -892,7 +926,6 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
         "com proteína extensamente hidrolisada e inédita, conforme prescrição."
     )
     _bullet("Não realizar substituições ou acréscimos sem orientação profissional.")
-
     _section(2, "Exclusividade da dieta")
     _bullet("Durante o período da dieta de eliminação, o animal NÃO pode receber:")
     for item in [
@@ -902,14 +935,12 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
     ]:
         _bullet(item, level=2)
     _bullet("Água está liberada à vontade.")
-
     _section(3, "Período mínimo")
     _bullet("A dieta deve ser seguida de forma rigorosa por no mínimo 8 semanas.")
     _bullet(
         "Melhoras parciais podem ocorrer antes, mas não interromper a dieta "
         "antes do período recomendado."
     )
-
     _section(4, "Manejo alimentar")
     _bullet("Dividir a alimentação diária em 2 a 3 refeições, respeitando os horários.")
     _bullet("Manter rotina alimentar estável, sem variações de preparo ou ingredientes.")
@@ -917,7 +948,6 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
     # ── Página 2: seções 5–6 + aviso ─────────────────────────────────────────
     _page_break()
     _title("INSTRUÇÕES SOBRE DIETA DE ELIMINAÇÃO")
-
     _section(5, "Avaliação clínica")
     _bullet(
         "Sinais como prurido, lesões de pele, otites, vômitos ou diarreia devem "
@@ -927,14 +957,12 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
         "Caso ocorra ingestão acidental de outro alimento, a dieta pode precisar "
         "ser reiniciada."
     )
-
     _section(6, "Fase de desafio alimentar")
     _bullet(
         "Após o período de eliminação e melhora clínica, novos alimentos só deverão "
         "ser reintroduzidos com orientação profissional, um por vez, para identificação "
         "do possível agente causador."
     )
-
     p_warn = doc.add_paragraph()
     _para_space(p_warn, before=200, after=80)
     r_warn = p_warn.add_run(
@@ -956,7 +984,6 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
             "que ele receba todos os nutrientes de forma segura e equilibrada, siga "
             "as orientações abaixo:"
         )
-
         _section(1, "Não faça substituições ou alterações")
         _bullet("Não troque ingredientes nem mude quantidades.")
         _bullet(
@@ -964,7 +991,6 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
             "podem desbalancear a dieta e prejudicar a saúde do animal."
         )
         _bullet("Forneça o suplemento apenas no momento de servir o alimento.")
-
         _section(2, "Modo de preparo")
         _bullet(
             "Siga exatamente o indicado. A forma de preparo influencia diretamente "
@@ -980,7 +1006,6 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
             "Refogado: Use apenas uma pequena quantidade de água para ajudar no "
             "cozimento. Nunca use óleo. Refogue por poucos minutos, com tampa, sem dourar."
         )
-
         _subtitle("HIGIENE E SEGURANÇA ALIMENTAR")
         _bullet(
             "Evite contaminação cruzada: lave bem mãos, utensílios e superfícies "
@@ -992,7 +1017,7 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
             "para facilitar o uso."
         )
 
-    # Rodapé em todas as páginas
+    # Rodapé em todas as páginas (tabela idêntica ao template)
     _build_footer_for_new_doc(doc, data_extenso)
 
     buf = io.BytesIO()
