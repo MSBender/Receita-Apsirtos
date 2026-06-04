@@ -864,7 +864,7 @@ def _build_footer_for_new_doc(doc: Document, data_extenso: str) -> None:
     # Para 0: espaço + separador (idêntico ao template: sz=4, cor 1A5276, after=60)
     p0 = OxmlElement("w:p")
     pPr0 = OxmlElement("w:pPr")
-    sp0 = OxmlElement("w:spacing"); sp0.set(qn("w:before"), "0"); sp0.set(qn("w:after"), "560")
+    sp0 = OxmlElement("w:spacing"); sp0.set(qn("w:before"), "0"); sp0.set(qn("w:after"), "60")
     pBdr = OxmlElement("w:pBdr")
     bot = OxmlElement("w:bottom")
     bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "4")
@@ -902,7 +902,6 @@ def _build_footer_for_new_doc(doc: Document, data_extenso: str) -> None:
         b.set(qn("w:val"),"none"); b.set(qn("w:sz"),"0")
         b.set(qn("w:space"),"0"); b.set(qn("w:color"),"auto"); bdr_r.append(b)
     tcPr_r.append(bdr_r)
-    vAlign = OxmlElement("w:vAlign"); vAlign.set(qn("w:val"), "bottom"); tcPr_r.append(vAlign)
     tc_r.append(tcPr_r)
     _cell_margins(tc_r, top=40, left=80, bottom=40, right=0)
 
@@ -1081,6 +1080,7 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
                 "para facilitar o uso.")
 
     _build_footer_for_new_doc(doc, data_extenso)
+    _add_signature_to_footer(doc)  # mesmo processo da pg 1
 
     buf = io.BytesIO()
     doc.save(buf)
