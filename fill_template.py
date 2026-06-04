@@ -219,7 +219,10 @@ def _build_ingredients_table(
     _set_table_width(table, CONTENT_W)
     _remove_table_borders(table)
     # tblGrid: força LibreOffice a respeitar as larguras das colunas
+    # Remove tblGrid existente (criado automaticamente pelo python-docx) e insere o correto
     tbl = table._tbl
+    for existing in tbl.findall(qn("w:tblGrid")):
+        tbl.remove(existing)
     tblGrid = OxmlElement("w:tblGrid")
     gc1 = OxmlElement("w:gridCol"); gc1.set(qn("w:w"), str(COL_INGR)); tblGrid.append(gc1)
     gc2 = OxmlElement("w:gridCol"); gc2.set(qn("w:w"), str(COL_QTD));  tblGrid.append(gc2)
