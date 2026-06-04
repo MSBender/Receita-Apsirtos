@@ -218,6 +218,16 @@ def _build_ingredients_table(
     table = doc.add_table(rows=0, cols=2)
     _set_table_width(table, CONTENT_W)
     _remove_table_borders(table)
+    # tblGrid: força LibreOffice a respeitar as larguras das colunas
+    tbl = table._tbl
+    tblGrid = OxmlElement("w:tblGrid")
+    gc1 = OxmlElement("w:gridCol"); gc1.set(qn("w:w"), str(COL_INGR)); tblGrid.append(gc1)
+    gc2 = OxmlElement("w:gridCol"); gc2.set(qn("w:w"), str(COL_QTD));  tblGrid.append(gc2)
+    tblPr_el = tbl.find(qn("w:tblPr"))
+    if tblPr_el is not None:
+        tblPr_el.addnext(tblGrid)
+    else:
+        tbl.insert(0, tblGrid)
 
     # Cabecalho
     hdr_row = table.add_row()
@@ -717,8 +727,59 @@ def fill_prescricao(
 # INSTRUÇÕES DIETA DE ELIMINAÇÃO
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _add_header_block(doc: Document) -> None:
+    """Adiciona o bloco teal de cabeçalho idêntico ao template (sem linha de tipo)."""
+    table = doc.add_table(rows=1, cols=1)
+    tbl = table._tbl
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr"); tbl.insert(0, tblPr)
+    tblW_el = OxmlElement("w:tblW")
+    tblW_el.set(qn("w:w"), "9638"); tblW_el.set(qn("w:type"), "dxa")
+    tblPr.append(tblW_el)
+
+    cell = table.rows[0].cells[0]
+    cell.text = ""
+
+    # Fundo teal
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto"); shd.set(qn("w:fill"), "1A5276")
+    tcPr.append(shd)
+    tcW_el = OxmlElement("w:tcW")
+    tcW_el.set(qn("w:w"), "9638"); tcW_el.set(qn("w:type"), "dxa")
+    tcPr.append(tcW_el)
+    tcMar = OxmlElement("w:tcMar")
+    for side, val in (("top","200"),("left","240"),("bottom","200"),("right","240")):
+        m = OxmlElement(f"w:{side}"); m.set(qn("w:w"), val); m.set(qn("w:type"), "dxa")
+        tcMar.append(m)
+    tcPr.append(tcMar)
+    bdr = OxmlElement("w:tcBorders")
+    for side in ("top","left","bottom","right","insideH","insideV"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"), "none"); b.set(qn("w:sz"), "0")
+        b.set(qn("w:space"), "0"); b.set(qn("w:color"), "auto")
+        bdr.append(b)
+    tcPr.append(bdr)
+
+    # Linha 1: nome da clínica
+    p1 = cell.paragraphs[0]
+    p1.text = ""
+    _para_space(p1, before=0, after=50)
+    r1 = p1.add_run("Apsirtos Clínica Veterinária")
+    r1.bold = True; r1.font.name = "Arial"; r1.font.size = Pt(16)
+    r1.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+
+    # Linha 2: médica
+    p2 = cell.add_paragraph()
+    _para_space(p2, before=0, after=0)
+    r2 = p2.add_run("Isabelle Rizzo Assumpção  —  CRMV 48652/SP")
+    r2.font.name = "Arial"; r2.font.size = Pt(10)
+    r2.font.color.rgb = RGBColor(0xAE, 0xD6, 0xF1)
+
+
 def _build_footer_for_new_doc(doc: Document, data_extenso: str) -> None:
-    """Cria rodapé idêntico ao do template (tabela 2 colunas) para docs gerados do zero."""
+    """Rodapé idêntico ao template: tabela 50/50, valores exatos de fonte/cor."""
     from docx.shared import Cm as _Cm
 
     section = doc.sections[0]
@@ -730,106 +791,149 @@ def _build_footer_for_new_doc(doc: Document, data_extenso: str) -> None:
     for child in list(ftr):
         ftr.remove(child)
 
-    FOOTER_W = 9638
-    LEFT_W   = 6264
-    RIGHT_W  = FOOTER_W - LEFT_W
-    DARK     = "1C2833"
-    GRAY     = "555555"
-    TEAL_M   = "2E86C1"
+    TBL_W  = 9639
+    CELL_W = 4819   # 50/50 — igual ao template
 
-    def _run_el(text, bold=False, italic=False, size_pt=9, color=DARK):
+    def _run_el(text, bold=False, italic=False, sz_half=18, color="1C2833"):
         r = OxmlElement("w:r")
         rPr = OxmlElement("w:rPr")
         if bold:
-            rPr.append(OxmlElement("w:b"))
+            b = OxmlElement("w:b"); rPr.append(b)
+        else:
+            b = OxmlElement("w:b"); b.set(qn("w:val"), "0"); rPr.append(b)
         if italic:
-            rPr.append(OxmlElement("w:i"))
+            i = OxmlElement("w:i"); rPr.append(i)
+        else:
+            i = OxmlElement("w:i"); i.set(qn("w:val"), "0"); rPr.append(i)
         rf = OxmlElement("w:rFonts")
-        rf.set(qn("w:ascii"), "Arial"); rf.set(qn("w:hAnsi"), "Arial")
-        sz = OxmlElement("w:sz"); sz.set(qn("w:val"), str(int(size_pt * 2)))
-        cl = OxmlElement("w:color"); cl.set(qn("w:val"), color)
-        rPr.extend([rf, sz, cl])
+        rf.set(qn("w:ascii"), "Arial"); rf.set(qn("w:hAnsi"), "Arial"); rPr.append(rf)
+        sz = OxmlElement("w:sz"); sz.set(qn("w:val"), str(sz_half)); rPr.append(sz)
+        cl = OxmlElement("w:color"); cl.set(qn("w:val"), color); rPr.append(cl)
         r.append(rPr)
         t = OxmlElement("w:t")
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        t.text = text
-        r.append(t)
+        t.text = text; r.append(t)
         return r
 
-    def _para_el(text="", bold=False, italic=False, size_pt=9, color=DARK,
-                 align=None, before=0, after=0, border_bottom=False):
-        p = OxmlElement("w:p")
-        pPr = OxmlElement("w:pPr")
-        sp = OxmlElement("w:spacing")
-        sp.set(qn("w:before"), str(before)); sp.set(qn("w:after"), str(after))
-        pPr.append(sp)
-        if align:
-            jc = OxmlElement("w:jc"); jc.set(qn("w:val"), align); pPr.append(jc)
-        if border_bottom:
-            pBdr = OxmlElement("w:pBdr")
-            bot = OxmlElement("w:bottom")
-            bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "6")
-            bot.set(qn("w:space"), "1"); bot.set(qn("w:color"), TEAL_M)
-            pBdr.append(bot); pPr.append(pBdr)
-        p.append(pPr)
-        if text:
-            p.append(_run_el(text, bold=bold, italic=italic, size_pt=size_pt, color=color))
-        return p
+    def _cell_margins(tc, top=40, left=0, bottom=40, right=80):
+        tcPr = tc.find(qn("w:tcPr"))
+        if tcPr is None:
+            tcPr = OxmlElement("w:tcPr"); tc.insert(0, tcPr)
+        tcMar = OxmlElement("w:tcMar")
+        for side, val in (("top",top),("left",left),("bottom",bottom),("right",right)):
+            m = OxmlElement(f"w:{side}"); m.set(qn("w:w"), str(val)); m.set(qn("w:type"), "dxa")
+            tcMar.append(m)
+        tcPr.append(tcMar)
 
-    # ── Montar tabela do rodapé ──────────────────────────────────────────────
+    # ── Montar tabela ────────────────────────────────────────────────────────
     tbl = OxmlElement("w:tbl")
 
     tblPr = OxmlElement("w:tblPr")
-    tblW = OxmlElement("w:tblW")
-    tblW.set(qn("w:w"), str(FOOTER_W)); tblW.set(qn("w:type"), "dxa")
+    tblW = OxmlElement("w:tblW"); tblW.set(qn("w:w"), str(TBL_W)); tblW.set(qn("w:type"), "dxa")
     tblPr.append(tblW)
     tblBdr = OxmlElement("w:tblBorders")
-    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+    for side in ("top","left","bottom","right","insideH","insideV"):
         b = OxmlElement(f"w:{side}")
-        b.set(qn("w:val"), "none"); b.set(qn("w:sz"), "0")
-        b.set(qn("w:space"), "0"); b.set(qn("w:color"), "auto")
-        tblBdr.append(b)
+        b.set(qn("w:val"),"none"); b.set(qn("w:sz"),"0")
+        b.set(qn("w:space"),"0"); b.set(qn("w:color"),"auto"); tblBdr.append(b)
     tblPr.append(tblBdr)
     tbl.append(tblPr)
 
+    tblGrid = OxmlElement("w:tblGrid")
+    for _ in range(2):
+        gc = OxmlElement("w:gridCol"); gc.set(qn("w:w"), str(CELL_W)); tblGrid.append(gc)
+    tbl.append(tblGrid)
+
     tr = OxmlElement("w:tr")
 
-    # ── Célula esquerda: separador + nome/CRMV + título ─────────────────────
+    # ── Célula esquerda ──────────────────────────────────────────────────────
     tc_l = OxmlElement("w:tc")
     tcPr_l = OxmlElement("w:tcPr")
-    tcW_l = OxmlElement("w:tcW")
-    tcW_l.set(qn("w:w"), str(LEFT_W)); tcW_l.set(qn("w:type"), "dxa")
+    tcW_l = OxmlElement("w:tcW"); tcW_l.set(qn("w:w"), str(CELL_W)); tcW_l.set(qn("w:type"), "dxa")
     tcPr_l.append(tcW_l)
+    # Bordas none
+    bdr_l = OxmlElement("w:tcBorders")
+    for side in ("top","left","bottom","right","insideH","insideV"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"),"none"); b.set(qn("w:sz"),"0")
+        b.set(qn("w:space"),"0"); b.set(qn("w:color"),"auto"); bdr_l.append(b)
+    tcPr_l.append(bdr_l)
     tc_l.append(tcPr_l)
-    # Para 0: espaço para assinatura + linha separadora
-    tc_l.append(_para_el(before=0, after=560, border_bottom=True))
-    # Para 1: nome — CRMV (bold, matching template)
-    tc_l.append(_para_el("Isabelle Rizzo Assumpção — CRMV 48652/SP",
-                         bold=True, size_pt=9, color=DARK, before=60, after=20))
-    # Para 2: título (italic)
-    tc_l.append(_para_el("Médica Veterinária",
-                         italic=True, size_pt=8, color=GRAY, before=0, after=0))
+    _cell_margins(tc_l, top=40, left=0, bottom=40, right=80)
+
+    # Para 0: espaço + separador (idêntico ao template: sz=4, cor 1A5276, after=60)
+    p0 = OxmlElement("w:p")
+    pPr0 = OxmlElement("w:pPr")
+    sp0 = OxmlElement("w:spacing"); sp0.set(qn("w:before"), "0"); sp0.set(qn("w:after"), "560")
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "4")
+    bot.set(qn("w:space"), "1"); bot.set(qn("w:color"), "1A5276")
+    pBdr.append(bot); pPr0.append(sp0); pPr0.append(pBdr); p0.append(pPr0)
+    tc_l.append(p0)
+
+    # Para 1: nome — bold, 1A5276, sz=18
+    p1 = OxmlElement("w:p")
+    pPr1 = OxmlElement("w:pPr")
+    sp1 = OxmlElement("w:spacing"); sp1.set(qn("w:before"), "0"); sp1.set(qn("w:after"), "20")
+    pPr1.append(sp1); p1.append(pPr1)
+    p1.append(_run_el("Isabelle Rizzo Assumpção — CRMV 48652/SP",
+                      bold=True, sz_half=18, color="1A5276"))
+    tc_l.append(p1)
+
+    # Para 2: título — italic, 555555, sz=17
+    p2 = OxmlElement("w:p")
+    pPr2 = OxmlElement("w:pPr")
+    sp2 = OxmlElement("w:spacing"); sp2.set(qn("w:before"), "0"); sp2.set(qn("w:after"), "0")
+    pPr2.append(sp2); p2.append(pPr2)
+    p2.append(_run_el("Médica Veterinária", italic=True, sz_half=17, color="555555"))
+    tc_l.append(p2)
+
     tr.append(tc_l)
 
-    # ── Célula direita: data de emissão ──────────────────────────────────────
+    # ── Célula direita ───────────────────────────────────────────────────────
     tc_r = OxmlElement("w:tc")
     tcPr_r = OxmlElement("w:tcPr")
-    tcW_r = OxmlElement("w:tcW")
-    tcW_r.set(qn("w:w"), str(RIGHT_W)); tcW_r.set(qn("w:type"), "dxa")
+    tcW_r = OxmlElement("w:tcW"); tcW_r.set(qn("w:w"), str(CELL_W)); tcW_r.set(qn("w:type"), "dxa")
     tcPr_r.append(tcW_r)
-    vAlign = OxmlElement("w:vAlign"); vAlign.set(qn("w:val"), "bottom")
-    tcPr_r.append(vAlign)
+    bdr_r = OxmlElement("w:tcBorders")
+    for side in ("top","left","bottom","right","insideH","insideV"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"),"none"); b.set(qn("w:sz"),"0")
+        b.set(qn("w:space"),"0"); b.set(qn("w:color"),"auto"); bdr_r.append(b)
+    tcPr_r.append(bdr_r)
+    vAlign = OxmlElement("w:vAlign"); vAlign.set(qn("w:val"), "bottom"); tcPr_r.append(vAlign)
     tc_r.append(tcPr_r)
-    tc_r.append(_para_el("Data de emissão:",
-                         size_pt=9, color=DARK, align="right", before=0, after=20))
-    tc_r.append(_para_el(data_extenso or "",
-                         bold=True, size_pt=9, color=DARK, align="right", before=0, after=0))
-    tr.append(tc_r)
+    _cell_margins(tc_r, top=40, left=80, bottom=40, right=0)
 
+    # Para 0: "Data de emissão:" — right, 555555, sz=17, before=70
+    p3 = OxmlElement("w:p")
+    pPr3 = OxmlElement("w:pPr")
+    sp3 = OxmlElement("w:spacing"); sp3.set(qn("w:before"), "70"); sp3.set(qn("w:after"), "20")
+    jc3 = OxmlElement("w:jc"); jc3.set(qn("w:val"), "right")
+    pPr3.append(sp3); pPr3.append(jc3); p3.append(pPr3)
+    p3.append(_run_el("Data de emissão:", sz_half=17, color="555555"))
+    tc_r.append(p3)
+
+    # Para 1: data — bold, right, 1A5276, sz=20
+    p4 = OxmlElement("w:p")
+    pPr4 = OxmlElement("w:pPr")
+    sp4 = OxmlElement("w:spacing"); sp4.set(qn("w:before"), "0"); sp4.set(qn("w:after"), "0")
+    jc4 = OxmlElement("w:jc"); jc4.set(qn("w:val"), "right")
+    pPr4.append(sp4); pPr4.append(jc4); p4.append(pPr4)
+    p4.append(_run_el(data_extenso or "", bold=True, sz_half=20, color="1A5276"))
+    tc_r.append(p4)
+
+    tr.append(tc_r)
     tbl.append(tr)
     ftr.append(tbl)
-    # Parágrafo final obrigatório no footer
-    ftr.append(OxmlElement("w:p"))
+
+    # Parágrafo final obrigatório
+    p_final = OxmlElement("w:p")
+    pPr_f = OxmlElement("w:pPr")
+    pStyle = OxmlElement("w:pStyle"); pStyle.set(qn("w:val"), "Footer")
+    pPr_f.append(pStyle); p_final.append(pPr_f)
+    ftr.append(p_final)
 
 
 def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> bytes:
@@ -838,10 +942,9 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
     Parameters
     ----------
     subtipo : str
-        'caseira' — 3 páginas (eliminação + preparo caseiro)
-        'racao'   — 2 páginas (só eliminação)
+        'caseira' — 3 páginas  |  'racao' — 2 páginas
     data_extenso : str
-        Data por extenso para o rodapé (ex: "3 DE JUNHO DE 2026")
+        Data por extenso para o rodapé.
     """
     from docx.shared import Cm as _Cm
 
@@ -859,35 +962,27 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
     def _title(text):
         p = doc.add_paragraph()
         run = p.add_run(text)
-        run.bold = True
-        run.font.name = "Arial"
-        run.font.size = Pt(14)
+        run.bold = True; run.font.name = "Arial"; run.font.size = Pt(14)
         run.font.color.rgb = TEAL
         _para_space(p, before=0, after=200)
 
     def _subtitle(text):
         p = doc.add_paragraph()
         run = p.add_run(text)
-        run.bold = True
-        run.font.name = "Arial"
-        run.font.size = Pt(11)
+        run.bold = True; run.font.name = "Arial"; run.font.size = Pt(11)
         run.font.color.rgb = TEAL
         _para_space(p, before=200, after=120)
 
     def _intro(text):
         p = doc.add_paragraph()
         run = p.add_run(text)
-        run.font.name = "Arial"
-        run.font.size = Pt(11)
-        run.font.color.rgb = DARK
+        run.font.name = "Arial"; run.font.size = Pt(11); run.font.color.rgb = DARK
         _para_space(p, before=0, after=160)
 
     def _section(num, text):
         p = doc.add_paragraph()
         run = p.add_run(f"{num}. {text}")
-        run.bold = True
-        run.font.name = "Arial"
-        run.font.size = Pt(11)
+        run.bold = True; run.font.name = "Arial"; run.font.size = Pt(11)
         run.font.color.rgb = TEAL
         _para_space(p, before=160, after=60)
 
@@ -895,129 +990,96 @@ def build_eliminacao_instructions_docx(subtipo: str, data_extenso: str = "") -> 
         p = doc.add_paragraph()
         pPr = p._element.get_or_add_pPr()
         ind = OxmlElement("w:ind")
-        ind.set(qn("w:left"), str(360 * level))
-        ind.set(qn("w:hanging"), "180")
+        ind.set(qn("w:left"), str(360 * level)); ind.set(qn("w:hanging"), "180")
         pPr.append(ind)
         _para_space(p, before=0, after=60)
         char = "•" if level == 1 else "◦"
         run = p.add_run(f"{char} {text}")
-        run.font.name = "Arial"
-        run.font.size = Pt(11)
-        run.font.color.rgb = DARK
+        run.font.name = "Arial"; run.font.size = Pt(11); run.font.color.rgb = DARK
 
     def _page_break():
         p = doc.add_paragraph()
         run = p.add_run()
-        br = OxmlElement("w:br")
-        br.set(qn("w:type"), "page")
-        run._r.append(br)
+        br = OxmlElement("w:br"); br.set(qn("w:type"), "page"); run._r.append(br)
         _para_space(p, before=0, after=0)
 
     # ── Página 1: seções 1–4 ──────────────────────────────────────────────────
+    _add_header_block(doc)
+    doc.add_paragraph()  # espaço após cabeçalho
     _title("INSTRUÇÕES SOBRE DIETA DE ELIMINAÇÃO")
-    _intro(
-        "A dieta de eliminação tem como objetivo identificar possíveis alimentos "
-        "envolvidos em reações adversas, como alergias ou intolerâncias alimentares."
-    )
+    _intro("A dieta de eliminação tem como objetivo identificar possíveis alimentos "
+           "envolvidos em reações adversas, como alergias ou intolerâncias alimentares.")
     _section(1, "Composição da dieta")
-    _bullet(
-        "A dieta deverá conter apenas uma fonte de proteína animal e uma fonte de "
-        "carboidrato, que o animal nunca tenha consumido anteriormente OU uma dieta "
-        "com proteína extensamente hidrolisada e inédita, conforme prescrição."
-    )
+    _bullet("A dieta deverá conter apenas uma fonte de proteína animal e uma fonte de "
+            "carboidrato, que o animal nunca tenha consumido anteriormente OU uma dieta "
+            "com proteína extensamente hidrolisada e inédita, conforme prescrição.")
     _bullet("Não realizar substituições ou acréscimos sem orientação profissional.")
     _section(2, "Exclusividade da dieta")
     _bullet("Durante o período da dieta de eliminação, o animal NÃO pode receber:")
-    for item in [
-        "Petiscos", "Ossos", "Biscoitos",
-        "Frutas, legumes extras", "Restos de comida",
-        "Suplementos, medicamentos palatáveis ou pastas com sabor",
-    ]:
+    for item in ["Petiscos","Ossos","Biscoitos","Frutas, legumes extras",
+                 "Restos de comida","Suplementos, medicamentos palatáveis ou pastas com sabor"]:
         _bullet(item, level=2)
     _bullet("Água está liberada à vontade.")
     _section(3, "Período mínimo")
     _bullet("A dieta deve ser seguida de forma rigorosa por no mínimo 8 semanas.")
-    _bullet(
-        "Melhoras parciais podem ocorrer antes, mas não interromper a dieta "
-        "antes do período recomendado."
-    )
+    _bullet("Melhoras parciais podem ocorrer antes, mas não interromper a dieta "
+            "antes do período recomendado.")
     _section(4, "Manejo alimentar")
     _bullet("Dividir a alimentação diária em 2 a 3 refeições, respeitando os horários.")
     _bullet("Manter rotina alimentar estável, sem variações de preparo ou ingredientes.")
 
     # ── Página 2: seções 5–6 + aviso ─────────────────────────────────────────
     _page_break()
+    _add_header_block(doc)
+    doc.add_paragraph()
     _title("INSTRUÇÕES SOBRE DIETA DE ELIMINAÇÃO")
     _section(5, "Avaliação clínica")
-    _bullet(
-        "Sinais como prurido, lesões de pele, otites, vômitos ou diarreia devem "
-        "ser monitorados e relatados."
-    )
-    _bullet(
-        "Caso ocorra ingestão acidental de outro alimento, a dieta pode precisar "
-        "ser reiniciada."
-    )
+    _bullet("Sinais como prurido, lesões de pele, otites, vômitos ou diarreia devem "
+            "ser monitorados e relatados.")
+    _bullet("Caso ocorra ingestão acidental de outro alimento, a dieta pode precisar "
+            "ser reiniciada.")
     _section(6, "Fase de desafio alimentar")
-    _bullet(
-        "Após o período de eliminação e melhora clínica, novos alimentos só deverão "
-        "ser reintroduzidos com orientação profissional, um por vez, para identificação "
-        "do possível agente causador."
-    )
+    _bullet("Após o período de eliminação e melhora clínica, novos alimentos só deverão "
+            "ser reintroduzidos com orientação profissional, um por vez, para identificação "
+            "do possível agente causador.")
     p_warn = doc.add_paragraph()
     _para_space(p_warn, before=200, after=80)
-    r_warn = p_warn.add_run(
-        "O sucesso da dieta depende diretamente do cumprimento rigoroso das "
-        "orientações. Qualquer exceção pode comprometer o diagnóstico."
-    )
-    r_warn.bold = True
-    r_warn.font.name = "Arial"
-    r_warn.font.size = Pt(11)
+    r_warn = p_warn.add_run("O sucesso da dieta depende diretamente do cumprimento rigoroso "
+                            "das orientações. Qualquer exceção pode comprometer o diagnóstico.")
+    r_warn.bold = True; r_warn.font.name = "Arial"; r_warn.font.size = Pt(11)
     r_warn.font.color.rgb = DARK
 
-    # ── Página 3 (apenas caseira): instruções gerais de preparo ───────────────
+    # ── Página 3 (só caseira): instruções gerais ──────────────────────────────
     if subtipo == "caseira":
         _page_break()
+        _add_header_block(doc)
+        doc.add_paragraph()
         _title("INSTRUÇÕES GERAIS DA DIETA")
         _subtitle("ORIENTAÇÕES ESSENCIAIS PARA O PREPARO DA DIETA CASEIRA")
-        _intro(
-            "Esta dieta foi formulada especificamente para o seu pet. Para garantir "
-            "que ele receba todos os nutrientes de forma segura e equilibrada, siga "
-            "as orientações abaixo:"
-        )
+        _intro("Esta dieta foi formulada especificamente para o seu pet. Para garantir "
+               "que ele receba todos os nutrientes de forma segura e equilibrada, siga "
+               "as orientações abaixo:")
         _section(1, "Não faça substituições ou alterações")
         _bullet("Não troque ingredientes nem mude quantidades.")
-        _bullet(
-            "Toda a proporção foi calculada individualmente. Ajustes sem orientação "
-            "podem desbalancear a dieta e prejudicar a saúde do animal."
-        )
+        _bullet("Toda a proporção foi calculada individualmente. Ajustes sem orientação "
+                "podem desbalancear a dieta e prejudicar a saúde do animal.")
         _bullet("Forneça o suplemento apenas no momento de servir o alimento.")
         _section(2, "Modo de preparo")
-        _bullet(
-            "Siga exatamente o indicado. A forma de preparo influencia diretamente "
-            "na digestibilidade e aproveitamento dos nutrientes."
-        )
+        _bullet("Siga exatamente o indicado. A forma de preparo influencia diretamente "
+                "na digestibilidade e aproveitamento dos nutrientes.")
         _bullet("Como pesar os ingredientes: pesar após o preparo.")
-        _bullet(
-            "Cozido: Cozinhe em água, sem óleo, sem sal e sem temperos. Não utilize "
-            "caldos prontos. Grãos devem ficar 12 horas de molho antes de cozinhar."
-        )
+        _bullet("Cozido: Cozinhe em água, sem óleo, sem sal e sem temperos. Não utilize "
+                "caldos prontos. Grãos devem ficar 12 horas de molho antes de cozinhar.")
         _bullet("Assado: Forno ou airfryer até 200°C, sem óleo ou temperos.")
-        _bullet(
-            "Refogado: Use apenas uma pequena quantidade de água para ajudar no "
-            "cozimento. Nunca use óleo. Refogue por poucos minutos, com tampa, sem dourar."
-        )
+        _bullet("Refogado: Use apenas uma pequena quantidade de água para ajudar no "
+                "cozimento. Nunca use óleo. Refogue por poucos minutos, com tampa, sem dourar.")
         _subtitle("HIGIENE E SEGURANÇA ALIMENTAR")
-        _bullet(
-            "Evite contaminação cruzada: lave bem mãos, utensílios e superfícies "
-            "entre o manuseio de carnes cruas e outros alimentos."
-        )
+        _bullet("Evite contaminação cruzada: lave bem mãos, utensílios e superfícies "
+                "entre o manuseio de carnes cruas e outros alimentos.")
         _bullet("Armazenamento: Geladeira: até 3 dias. Freezer: até 90 dias.")
-        _bullet(
-            "Guarde sempre em recipientes limpos, bem vedados e porções individuais "
-            "para facilitar o uso."
-        )
+        _bullet("Guarde sempre em recipientes limpos, bem vedados e porções individuais "
+                "para facilitar o uso.")
 
-    # Rodapé em todas as páginas (tabela idêntica ao template)
     _build_footer_for_new_doc(doc, data_extenso)
 
     buf = io.BytesIO()
