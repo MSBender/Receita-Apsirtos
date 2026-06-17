@@ -5,7 +5,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 import streamlit as st
-import io, os, re, tempfile, subprocess, platform, base64, json
+import io, os, re, tempfile, subprocess, platform, base64, json, gc
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +21,7 @@ from fill_template import (
     fill_prescricao                      as _fill_prescricao,
     build_eliminacao_instructions_docx   as _build_eliminacao,
 )
+from draft import save_draft, draft_info, clear_draft
 
 # ── Tesseract (Windows) ───────────────────────────────────────────────────────
 if platform.system() == "Windows":
@@ -46,6 +47,11 @@ TEMPLATES = {
 }
 
 VIAS = ["USO ORAL", "USO TÓPICO", "USO OTOLÓGICO", "USO SUBCUTÂNEO"]
+
+ANAM_FIELDS = [
+    "pet_nome", "pet_especie", "pet_raca", "pet_sexo", "pet_nascimento",
+    "tutor_nome", "tutor_cpf", "tutor_endereco",
+]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -104,12 +110,20 @@ def ocr_dietalabs(image_bytes: bytes, api_key: str = "") -> tuple[list[tuple[str
     if not api_key:
         raise ValueError("Chave de API Anthropic não configurada.")
 
-    img = Image.open(io.BytesIO(image_bytes))
-    fmt = (img.format or "JPEG").upper()
-    media_map = {"JPEG": "image/jpeg", "JPG": "image/jpeg", "PNG": "image/png",
-                 "WEBP": "image/webp", "GIF": "image/gif"}
-    media_type = media_map.get(fmt, "image/jpeg")
-    img_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+    # Reduz a imagem antes de enviar: corta o uso de memória e o tamanho do
+    # payload da API, mantendo resolução de sobra para o OCR de texto.
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    MAX_LADO = 1600
+    if max(img.size) > MAX_LADO:
+        img.thumbnail((MAX_LADO, MAX_LADO), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    img.close()
+    media_type = "image/jpeg"
+    img_b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
+    buf.close()
+    del img, buf
+    gc.collect()
 
     prompt = (
         "Você está vendo um print do sistema Dietalabs de nutrição veterinária.\n\n"
@@ -376,6 +390,27 @@ def main():
     st.title("🐾 Gerador de Documentos")
     st.caption("Isabelle Rizzo Assumpção • CRMV 48652/SP")
 
+    # ── Recuperação de rascunho ───────────────────────────────────────────
+    _info = draft_info()
+    if _info and not st.session_state.get("_rascunho_resolvido"):
+        st.warning(
+            f"💾 Há um rascunho salvo em **{_info['when']}**. "
+            "Quer recuperar o que estava preenchido?"
+        )
+        _c1, _c2, _ = st.columns([1, 1, 3])
+        if _c1.button("♻️ Recuperar"):
+            for _k, _v in _info["fields"].items():
+                st.session_state[_k] = _v
+            st.session_state["_rascunho_resolvido"] = True
+            st.rerun()
+        if _c2.button("🗑️ Descartar"):
+            clear_draft()
+            for _k in list(st.session_state.keys()):
+                if _k.startswith(("anam_", "presc_", "opt_")) or _k == "exames_raw":
+                    del st.session_state[_k]
+            st.session_state["_rascunho_resolvido"] = True
+            st.rerun()
+
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.header("⚙️ Configurações")
@@ -406,27 +441,40 @@ def main():
     st.subheader("1. Ficha do cliente")
     docx_file = st.file_uploader("Envie o arquivo ANAMNESE.docx", type=["docx"])
 
-    anamnese: dict = {}
     if docx_file:
         try:
-            anamnese = parse_anamnese(docx_file.read())
+            parsed = parse_anamnese(docx_file.read())
+            # Semeia os campos só uma vez por arquivo (não apaga edições/rascunho)
+            if st.session_state.get("_docx_semeado") != docx_file.name:
+                for _k in ANAM_FIELDS:
+                    st.session_state[f"anam_{_k}"] = parsed.get(_k, "")
+                if not st.session_state.get("anam_pet_especie"):
+                    st.session_state["anam_pet_especie"] = "Cão"
+                st.session_state["_docx_semeado"] = docx_file.name
             st.success("✅ Ficha lida. Confira os dados abaixo e corrija se necessário:")
         except Exception as e:
             st.error(f"Erro ao ler o arquivo Word: {e}")
 
+    tem_ficha = bool(docx_file) or any(
+        st.session_state.get(f"anam_{_k}", "") for _k in ANAM_FIELDS
+    )
+
+    anamnese: dict = {}
+    if tem_ficha:
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("**Animal**")
-            anamnese["pet_nome"]       = st.text_input("Nome do pet",       anamnese.get("pet_nome", ""))
-            anamnese["pet_especie"]    = st.text_input("Espécie",            anamnese.get("pet_especie", "Cão"))
-            anamnese["pet_raca"]       = st.text_input("Raça",               anamnese.get("pet_raca", ""))
-            anamnese["pet_sexo"]       = st.text_input("Sexo",               anamnese.get("pet_sexo", ""))
-            anamnese["pet_nascimento"] = st.text_input("Data de nascimento", anamnese.get("pet_nascimento", ""))
+            st.text_input("Nome do pet",       key="anam_pet_nome")
+            st.text_input("Espécie",            key="anam_pet_especie")
+            st.text_input("Raça",               key="anam_pet_raca")
+            st.text_input("Sexo",               key="anam_pet_sexo")
+            st.text_input("Data de nascimento", key="anam_pet_nascimento")
         with col2:
             st.markdown("**Responsável**")
-            anamnese["tutor_nome"]     = st.text_input("Nome do tutor", anamnese.get("tutor_nome", ""))
-            anamnese["tutor_cpf"]      = st.text_input("CPF",           anamnese.get("tutor_cpf", ""))
-            anamnese["tutor_endereco"] = st.text_input("Endereço",      anamnese.get("tutor_endereco", ""))
+            st.text_input("Nome do tutor", key="anam_tutor_nome")
+            st.text_input("CPF",           key="anam_tutor_cpf")
+            st.text_input("Endereço",      key="anam_tutor_endereco")
+        anamnese = {_k: st.session_state.get(f"anam_{_k}", "") for _k in ANAM_FIELDS}
 
     # ── Passo 2: Conteúdo (varia por tipo) ────────────────────────────────────
     st.subheader("2. Conteúdo")
@@ -441,6 +489,7 @@ def main():
     if tipo == "dieta":
         eliminacao = st.checkbox(
             "🔬 Dieta de Eliminação",
+            key="opt_eliminacao",
             help="Substitui as instruções do documento pelas orientações específicas de dieta de eliminação.",
         )
         st.caption("Envie um ou mais prints do Dietalabs — cada um será uma Opção no plano.")
@@ -457,7 +506,7 @@ def main():
                     img_bytes = img_file.read()
 
                     with col_img:
-                        st.image(img_bytes, use_container_width=True)
+                        st.image(img_bytes, width="stretch")
 
                     try:
                         ingredients, total = ocr_dietalabs(img_bytes, api_key=api_key)
@@ -509,6 +558,7 @@ def main():
         exames_raw = st.text_area(
             "Exames solicitados",
             height=220,
+            key="exames_raw",
             placeholder="Hemograma completo\nBioquímico renal (ureia, creatinina, ALT, FA)\nUrinálise (EAS)\n...",
         )
         exames = [line.strip() for line in exames_raw.splitlines() if line.strip()]
@@ -526,7 +576,7 @@ def main():
     # ── Passo 3: Gerar PDF ────────────────────────────────────────────────────
     st.subheader("3. Gerar documento")
 
-    ready = bool(docx_file and anamnese and conteudo_ok)
+    ready = bool(anamnese.get("pet_nome") and conteudo_ok)
     if not ready:
         st.info("Preencha a ficha do cliente e o conteúdo acima para habilitar a geração.")
 
@@ -558,6 +608,20 @@ def main():
                 st.error(f"Erro ao gerar o PDF: {e}")
                 with st.expander("Detalhes do erro"):
                     st.exception(e)
+
+    # ── Autosave do rascunho (sempre por último) ──────────────────────────
+    _snap = {
+        k: st.session_state[k]
+        for k in list(st.session_state.keys())
+        if k.startswith(("anam_", "presc_", "opt_")) or k == "exames_raw"
+    }
+    _tem_conteudo = (
+        bool(str(_snap.get("anam_pet_nome", "")).strip())
+        or bool(str(_snap.get("exames_raw", "")).strip())
+        or any(k.endswith("_item") and str(v).strip() for k, v in _snap.items())
+    )
+    if _tem_conteudo:
+        save_draft(_snap)
 
 
 if __name__ == "__main__":
