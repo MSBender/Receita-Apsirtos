@@ -54,6 +54,33 @@ ANAM_FIELDS = [
 ]
 
 
+# ── Monitoramento de boot e memória (diagnóstico de reset) ───────────────────
+def _rss_mb() -> int:
+    """Uso de memória residente do processo, em MB (-1 se indisponível)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) // 1024
+    except Exception:
+        pass
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+    except Exception:
+        return -1
+
+
+@st.cache_resource
+def _log_boot():
+    """Marcador único por processo — vira a linha de 'boot' no log do Manage app."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print("=" * 64, flush=True)
+    print(f"APP INICIOU (boot) — {ts} — RAM inicial: {_rss_mb()} MB", flush=True)
+    print("=" * 64, flush=True)
+    return True
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. PARSING DO ANAMNESE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -385,6 +412,7 @@ def main():
         layout="centered",
     )
 
+    _log_boot()
     _init_prescricao()
 
     st.title("🐾 Gerador de Documentos")
@@ -622,6 +650,15 @@ def main():
     )
     if _tem_conteudo:
         save_draft(_snap)
+
+    # ── Monitor de memória: só alerta perto do limite (~1GB do plano grátis) ──
+    _rss = _rss_mb()
+    if _rss >= 700:
+        print(
+            f"RAM ALTA: {_rss} MB às {datetime.now().strftime('%H:%M:%S')} "
+            "(limite ~1024 MB no plano grátis)",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":
