@@ -113,11 +113,11 @@ def ocr_dietalabs(image_bytes: bytes, api_key: str = "") -> tuple[list[tuple[str
     # Reduz a imagem antes de enviar: corta o uso de memória e o tamanho do
     # payload da API, mantendo resolução de sobra para o OCR de texto.
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    MAX_LADO = 1600
+    MAX_LADO = 1568   # mesmo limite que a API de visão da Anthropic já aplica internamente
     if max(img.size) > MAX_LADO:
         img.thumbnail((MAX_LADO, MAX_LADO), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85)
+    img.save(buf, format="JPEG", quality=90)
     img.close()
     media_type = "image/jpeg"
     img_b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
