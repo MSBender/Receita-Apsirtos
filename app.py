@@ -8,6 +8,7 @@ import streamlit as st
 import io, os, re, tempfile, subprocess, platform, base64, json, gc
 from datetime import datetime
 from pathlib import Path
+import urllib.request
 
 from docx import Document
 from PIL import Image
@@ -71,6 +72,36 @@ def _rss_mb() -> int:
         return -1
 
 
+def _notify_event(kind: str, detail: str = "") -> None:
+    """Envia o evento pra um webhook externo (planilha Google), se configurado.
+
+    Lê a URL do secret/variável EVENT_WEBHOOK_URL. Fire-and-forget: se não
+    houver URL ou der erro, ignora — nunca quebra nem trava o app.
+    """
+    url = os.environ.get("EVENT_WEBHOOK_URL", "")
+    if not url:
+        return
+    try:
+        payload = json.dumps({
+            "kind": kind,
+            "detail": detail,
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "ram_mb": _rss_mb(),
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=payload, headers={"Content-Type": "application/json"}
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+
+@st.cache_resource
+def _alert_state():
+    """Estado por processo p/ não repetir o alerta de RAM alta a cada rerun."""
+    return {"ram_alta_sent": False}
+
+
 @st.cache_resource
 def _log_boot():
     """Marcador único por processo — vira a linha de 'boot' no log do Manage app."""
@@ -78,6 +109,7 @@ def _log_boot():
     print("=" * 64, flush=True)
     print(f"APP INICIOU (boot) — {ts} — RAM inicial: {_rss_mb()} MB", flush=True)
     print("=" * 64, flush=True)
+    _notify_event("BOOT", "app iniciou")
     return True
 
 
@@ -669,6 +701,10 @@ def main():
             "(limite ~1024 MB no plano grátis)",
             flush=True,
         )
+        _alerts = _alert_state()
+        if not _alerts["ram_alta_sent"]:
+            _alerts["ram_alta_sent"] = True
+            _notify_event("RAM_ALTA", f"{_rss} MB")
 
 
 if __name__ == "__main__":
