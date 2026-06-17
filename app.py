@@ -190,6 +190,16 @@ def ocr_dietalabs(image_bytes: bytes, api_key: str = "") -> tuple[list[tuple[str
     return ingredients, total
 
 
+@st.cache_data(show_spinner=False, max_entries=30)
+def ocr_dietalabs_cached(image_bytes: bytes, api_key: str):
+    """Cacheia o OCR por conteúdo da imagem: roda 1x por print, não a cada rerun.
+
+    Antes, a API de visão era chamada a cada interação na tela (custo + memória
+    repetidos). Com o cache, cada print é lido uma única vez por sessão.
+    """
+    return ocr_dietalabs(image_bytes, api_key=api_key)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. GERAÇÃO DE PDF
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -537,7 +547,7 @@ def main():
                         st.image(img_bytes, width="stretch")
 
                     try:
-                        ingredients, total = ocr_dietalabs(img_bytes, api_key=api_key)
+                        ingredients, total = ocr_dietalabs_cached(img_bytes, api_key)
                         ocr_ok = True
                     except Exception as e:
                         ingredients, total = [], ""
