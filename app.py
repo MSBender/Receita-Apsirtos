@@ -468,8 +468,11 @@ def main():
         for _k, _v in _fields.items():
             st.session_state.setdefault(_k, _v)
         st.session_state["_restored_sid"] = sid
-        st.session_state["_tinha_rascunho"] = any(
-            str(_v).strip() for _v in _fields.values()
+        st.session_state["_tinha_rascunho"] = bool(
+            str(_fields.get("anam_pet_nome", "")).strip()
+            or str(_fields.get("exames_raw", "")).strip()
+            or any(_k.endswith("_item") and str(_v).strip()
+                   for _k, _v in _fields.items())
         )
 
     _init_prescricao()
@@ -492,7 +495,7 @@ def main():
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.header("⚙️ Configurações")
-        template_key  = st.selectbox("Tipo de documento", list(TEMPLATES.keys()))
+        template_key  = st.selectbox("Tipo de documento", list(TEMPLATES.keys()), key="tipo_doc")
         template_info = TEMPLATES[template_key]
         template_path = template_info["path"]
         tipo          = template_info["tipo"]
@@ -691,7 +694,7 @@ def main():
     _snap = {
         k: st.session_state[k]
         for k in list(st.session_state.keys())
-        if k.startswith(("anam_", "presc_", "opt_")) or k == "exames_raw"
+        if k.startswith(("anam_", "presc_", "opt_")) or k in ("exames_raw", "tipo_doc")
     }
     _tem_conteudo = (
         bool(str(_snap.get("anam_pet_nome", "")).strip())
