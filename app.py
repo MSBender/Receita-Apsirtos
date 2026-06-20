@@ -487,9 +487,11 @@ def main():
         if _cb.button("🆕 Nova receita"):
             clear_draft(sid)
             for _k in list(st.session_state.keys()):
-                if _k.startswith(("anam_", "presc_", "opt_")) or _k == "exames_raw":
+                if _k.startswith(("anam_", "presc_", "opt_")) or _k in ("exames_raw", "tipo_doc"):
                     del st.session_state[_k]
             st.session_state["_tinha_rascunho"] = False
+            st.session_state["_restored_sid"] = None
+            st.query_params["sid"] = uuid.uuid4().hex[:12]
             st.rerun()
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
