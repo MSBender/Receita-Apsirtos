@@ -9,6 +9,7 @@ import io, os, re, tempfile, subprocess, platform, base64, json, gc
 from datetime import datetime
 from pathlib import Path
 import urllib.request
+import uuid
 
 from docx import Document
 from PIL import Image
@@ -22,7 +23,7 @@ from fill_template import (
     fill_prescricao                      as _fill_prescricao,
     build_eliminacao_instructions_docx   as _build_eliminacao,
 )
-from draft import save_draft, draft_info, clear_draft
+from draft import save_draft, load_draft, clear_draft
 
 # ── Tesseract (Windows) ───────────────────────────────────────────────────────
 if platform.system() == "Windows":
@@ -455,30 +456,37 @@ def main():
     )
 
     _log_boot()
+
+    # ── Sessão durável: id na URL + restauração automática (sobrevive a quedas) ─
+    sid = st.query_params.get("sid")
+    if not sid:
+        sid = uuid.uuid4().hex[:12]
+        st.query_params["sid"] = sid
+    if st.session_state.get("_restored_sid") != sid:
+        _d = load_draft(sid)
+        _fields = (_d.get("fields") or {}) if _d else {}
+        for _k, _v in _fields.items():
+            st.session_state.setdefault(_k, _v)
+        st.session_state["_restored_sid"] = sid
+        st.session_state["_tinha_rascunho"] = any(
+            str(_v).strip() for _v in _fields.values()
+        )
+
     _init_prescricao()
 
     st.title("🐾 Gerador de Documentos")
     st.caption("Isabelle Rizzo Assumpção • CRMV 48652/SP")
 
-    # ── Recuperação de rascunho ───────────────────────────────────────────
-    _info = draft_info()
-    if _info and not st.session_state.get("_rascunho_resolvido"):
-        st.warning(
-            f"💾 Há um rascunho salvo em **{_info['when']}**. "
-            "Quer recuperar o que estava preenchido?"
-        )
-        _c1, _c2, _ = st.columns([1, 1, 3])
-        if _c1.button("♻️ Recuperar"):
-            for _k, _v in _info["fields"].items():
-                st.session_state[_k] = _v
-            st.session_state["_rascunho_resolvido"] = True
-            st.rerun()
-        if _c2.button("🗑️ Descartar"):
-            clear_draft()
+    # ── Recuperação automática + opção de recomeçar ───────────────────────────
+    if st.session_state.get("_tinha_rascunho"):
+        _ci, _cb = st.columns([3, 1])
+        _ci.caption("↩️ Recuperamos automaticamente o que você estava preenchendo.")
+        if _cb.button("🆕 Nova receita"):
+            clear_draft(sid)
             for _k in list(st.session_state.keys()):
                 if _k.startswith(("anam_", "presc_", "opt_")) or _k == "exames_raw":
                     del st.session_state[_k]
-            st.session_state["_rascunho_resolvido"] = True
+            st.session_state["_tinha_rascunho"] = False
             st.rerun()
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
@@ -691,7 +699,7 @@ def main():
         or any(k.endswith("_item") and str(v).strip() for k, v in _snap.items())
     )
     if _tem_conteudo:
-        save_draft(_snap)
+        save_draft(sid, _snap)
 
     # ── Monitor de memória: só alerta perto do limite (~1GB do plano grátis) ──
     _rss = _rss_mb()

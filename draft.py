@@ -1,61 +1,54 @@
 """
-draft.py — Autosave / recuperação de rascunho do formulário.
+draft.py — Autosave / restauração de rascunho por sessão.
 
-Salva os campos de texto preenchidos num arquivo JSON local. Se o app
-reiniciar no meio do uso (reboot por memória, queda de conexão, app dormindo),
-o conteúdo pode ser recuperado em vez de começar tudo do zero.
+Cada sessão tem um id (guardado na URL pelo app). O rascunho é gravado num
+arquivo JSON por id. Quando a página recarrega — inclusive numa reconexão de
+WebSocket — o app lê o mesmo id e restaura tudo automaticamente, sem o usuário
+perder nada nem precisar clicar.
 
 Stdlib apenas — nenhuma dependência nova.
 """
 
 import os
+import re
 import json
 import tempfile
 from datetime import datetime
 
-_DRAFT_PATH = os.path.join(tempfile.gettempdir(), "receita_isabelle_draft.json")
+_DIR = tempfile.gettempdir()
 
 
-def save_draft(fields: dict) -> None:
+def _path(sid: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", str(sid))[:40] or "default"
+    return os.path.join(_DIR, f"receita_draft_{safe}.json")
+
+
+def save_draft(sid: str, fields: dict) -> None:
     """Grava o rascunho de forma atômica. Nunca lança exceção."""
     try:
         payload = {
             "saved_at": datetime.now().isoformat(timespec="seconds"),
             "fields": fields,
         }
-        tmp = _DRAFT_PATH + ".tmp"
+        p = _path(sid)
+        tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
-        os.replace(tmp, _DRAFT_PATH)
+        os.replace(tmp, p)
     except Exception:
-        pass  # autosave jamais deve quebrar o app
+        pass
 
 
-def load_draft() -> dict:
+def load_draft(sid: str) -> dict:
     try:
-        with open(_DRAFT_PATH, "r", encoding="utf-8") as f:
+        with open(_path(sid), "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}
 
 
-def draft_info() -> dict:
-    """Retorna {'when': str, 'fields': dict} se houver rascunho com conteúdo."""
-    data = load_draft()
-    fields = data.get("fields") if data else None
-    if not fields:
-        return {}
-    if not any(str(v).strip() for v in fields.values()):
-        return {}
+def clear_draft(sid: str) -> None:
     try:
-        when = datetime.fromisoformat(data["saved_at"]).strftime("%d/%m/%Y às %H:%M")
-    except Exception:
-        when = "?"
-    return {"when": when, "fields": fields}
-
-
-def clear_draft() -> None:
-    try:
-        os.remove(_DRAFT_PATH)
+        os.remove(_path(sid))
     except Exception:
         pass
