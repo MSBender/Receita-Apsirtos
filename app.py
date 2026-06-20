@@ -5,7 +5,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 import streamlit as st
-import io, os, re, tempfile, subprocess, platform, base64, json, gc
+import io, os, re, tempfile, subprocess, platform, base64, json, gc, hashlib
 from datetime import datetime
 from pathlib import Path
 import urllib.request
@@ -23,7 +23,10 @@ from fill_template import (
     fill_prescricao                      as _fill_prescricao,
     build_eliminacao_instructions_docx   as _build_eliminacao,
 )
-from draft import save_draft, load_draft, clear_draft
+from draft import (
+    save_draft, load_draft, clear_draft,
+    save_image, list_images, clear_images,
+)
 
 # ── Tesseract (Windows) ───────────────────────────────────────────────────────
 if platform.system() == "Windows":
@@ -54,6 +57,20 @@ ANAM_FIELDS = [
     "pet_nome", "pet_especie", "pet_raca", "pet_sexo", "pet_nascimento",
     "tutor_nome", "tutor_cpf", "tutor_endereco",
 ]
+
+
+def _to_jpeg(image_bytes: bytes, max_lado: int = 1568, q: int = 90) -> bytes:
+    """Converte qualquer imagem para JPEG reduzido (<=1568px) — p/ exibir e guardar."""
+    try:
+        im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        if max(im.size) > max_lado:
+            im.thumbnail((max_lado, max_lado), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=q)
+        im.close()
+        return buf.getvalue()
+    except Exception:
+        return image_bytes
 
 
 # ── Monitoramento de boot e memória (diagnóstico de reset) ───────────────────
@@ -473,6 +490,8 @@ def main():
             or str(_fields.get("exames_raw", "")).strip()
             or any(_k.endswith("_item") and str(_v).strip()
                    for _k, _v in _fields.items())
+            or any(_k.startswith("ing_") and str(_v).strip()
+                   for _k, _v in _fields.items())
         )
 
     _init_prescricao()
@@ -486,8 +505,9 @@ def main():
         _ci.caption("↩️ Recuperamos automaticamente o que você estava preenchendo.")
         if _cb.button("🆕 Nova receita"):
             clear_draft(sid)
+            clear_images(sid)
             for _k in list(st.session_state.keys()):
-                if _k.startswith(("anam_", "presc_", "opt_")) or _k in ("exames_raw", "tipo_doc"):
+                if _k.startswith(("anam_", "presc_", "opt_", "ing_")) or _k in ("exames_raw", "tipo_doc"):
                     del st.session_state[_k]
             st.session_state["_tinha_rascunho"] = False
             st.session_state["_restored_sid"] = None
@@ -576,64 +596,78 @@ def main():
             help="Substitui as instruções do documento pelas orientações específicas de dieta de eliminação.",
         )
         st.caption("Envie um ou mais prints do Dietalabs — cada um será uma Opção no plano.")
-        imagens = st.file_uploader(
+        novas = st.file_uploader(
             "Prints (PNG ou JPG)",
             type=["png", "jpg", "jpeg"],
             accept_multiple_files=True,
         )
 
-        if imagens:
-            for i, img_file in enumerate(imagens):
-                with st.expander(f"Opção {i + 1} — {img_file.name}", expanded=True):
-                    col_img, col_data = st.columns([1, 2])
-                    img_bytes = img_file.read()
+        # Conjunto de prints = os já salvos (recuperados do disco) + os novos enviados.
+        # Cada print é identificado pelo hash do conteúdo: reenviar o mesmo não duplica
+        # e o OCR nunca roda de novo para um print que já tem ingredientes.
+        prints = []          # [(hash, jpeg_bytes), ...]
+        _vistos = set()
+        for _h, _jb in list_images(sid):
+            if _h not in _vistos:
+                prints.append((_h, _jb)); _vistos.add(_h)
+        if novas:
+            for _f in novas:
+                _jb = _to_jpeg(_f.read())
+                _h = hashlib.sha1(_jb).hexdigest()[:16]
+                if _h not in _vistos:
+                    save_image(sid, _h, _jb)
+                    prints.append((_h, _jb)); _vistos.add(_h)
 
-                    with col_img:
-                        st.image(img_bytes, width="stretch")
+        for _idx, (_h, _jb) in enumerate(prints):
+            with st.expander(f"Opção {_idx + 1}", expanded=True):
+                col_img, col_data = st.columns([1, 2])
+                with col_img:
+                    st.image(_jb, width="stretch")
 
+                ing_key = f"ing_{_h}"
+                ocr_ok = True
+                # OCR só para print novo (sem ingredientes ainda); recuperado não re-chama a API.
+                if ing_key not in st.session_state:
                     try:
-                        ingredients, total = ocr_dietalabs_cached(img_bytes, api_key)
-                        ocr_ok = True
+                        ingredients, total = ocr_dietalabs_cached(_jb, api_key)
+                        raw = "\n".join(f"{n} | {q}" for n, q in ingredients)
+                        if total:
+                            raw += f"\nTOTAL | {total}"
                     except Exception as e:
-                        ingredients, total = [], ""
+                        raw = ""
                         ocr_ok = False
                         st.warning(f"Leitura automática indisponível ({e}). Preencha manualmente.")
+                    st.session_state[ing_key] = raw
 
-                    raw = "\n".join(f"{n} | {q}" for n, q in ingredients)
-                    if total:
-                        raw += f"\nTOTAL | {total}"
+                with col_data:
+                    st.markdown("**Ingredientes** — formato: `Nome | Quantidade (g)`")
+                    if ocr_ok and str(st.session_state.get(ing_key, "")).strip():
+                        st.caption("✅ Extraído/recuperado. Corrija se necessário.")
+                    else:
+                        st.caption("✏️ Digite os ingredientes manualmente.")
+                    edited = st.text_area(
+                        "Ingredientes",
+                        height=220,
+                        key=ing_key,
+                        label_visibility="collapsed",
+                    )
 
-                    with col_data:
-                        st.markdown("**Ingredientes** — formato: `Nome | Quantidade (g)`")
-                        if ocr_ok and ingredients:
-                            st.caption("✅ Extraído automaticamente. Corrija se necessário.")
-                        else:
-                            st.caption("✏️ Digite os ingredientes manualmente.")
+                parsed_ings = []
+                parsed_total = ""
+                for line in edited.splitlines():
+                    if "|" not in line:
+                        continue
+                    parts  = line.split("|", 1)
+                    nome_e = parts[0].strip()
+                    qtd_e  = parts[1].strip()
+                    if nome_e.upper() == "TOTAL":
+                        parsed_total = qtd_e
+                    elif nome_e:
+                        parsed_ings.append((nome_e, qtd_e))
 
-                        edited = st.text_area(
-                            "Ingredientes",
-                            value=raw,
-                            height=220,
-                            key=f"ing_{i}",
-                            label_visibility="collapsed",
-                        )
+                opcoes.append((parsed_ings, parsed_total))
 
-                    parsed_ings = []
-                    parsed_total = total
-                    for line in edited.splitlines():
-                        if "|" not in line:
-                            continue
-                        parts  = line.split("|", 1)
-                        nome_e = parts[0].strip()
-                        qtd_e  = parts[1].strip()
-                        if nome_e.upper() == "TOTAL":
-                            parsed_total = qtd_e
-                        elif nome_e:
-                            parsed_ings.append((nome_e, qtd_e))
-
-                    opcoes.append((parsed_ings, parsed_total))
-
-            conteudo_ok = bool(opcoes)
+        conteudo_ok = bool(opcoes)
 
     # ── EXAMES ────────────────────────────────────────────────────────────────
     elif tipo == "exames":
@@ -696,12 +730,13 @@ def main():
     _snap = {
         k: st.session_state[k]
         for k in list(st.session_state.keys())
-        if k.startswith(("anam_", "presc_", "opt_")) or k in ("exames_raw", "tipo_doc")
+        if k.startswith(("anam_", "presc_", "opt_", "ing_")) or k in ("exames_raw", "tipo_doc")
     }
     _tem_conteudo = (
         bool(str(_snap.get("anam_pet_nome", "")).strip())
         or bool(str(_snap.get("exames_raw", "")).strip())
         or any(k.endswith("_item") and str(v).strip() for k, v in _snap.items())
+        or any(k.startswith("ing_") and str(v).strip() for k, v in _snap.items())
     )
     if _tem_conteudo:
         save_draft(sid, _snap)
